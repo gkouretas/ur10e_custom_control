@@ -14,6 +14,12 @@ from ur10e_configs import UR_QOS_PROFILE
 from sensor_msgs.msg import JointState
 from builtin_interfaces.msg import Duration
 
+from std_srvs.srv import Trigger
+from exercise_decoder_node.exercise_decoder_node_configs import (
+    MINDROVE_ACTIVATION_SERVICE,
+    MINDROVE_DEACTIVATION_SERVICE
+)
+
 from typing import Callable
 from functools import partial
 
@@ -36,6 +42,16 @@ class URExerciseControlWindow(URControlQtWindow):
         self._exercise_traj_waypoints: list[list[float]] = []
         self._exercise_traj_time: list[Duration] = []
         self._exercise_traj_ready: bool = False
+
+        self._activate_mindrove_service = self._node.create_client(
+            Trigger, 
+            MINDROVE_ACTIVATION_SERVICE
+        )
+
+        self._deactivate_mindrove_service = self._node.create_client(
+            Trigger, 
+            MINDROVE_DEACTIVATION_SERVICE
+        )
 
     def __conf_exercise_tab(self, layout: QLayout) -> None:
         _run_loop = False
@@ -178,6 +194,16 @@ class URExerciseControlWindow(URControlQtWindow):
             # TODO: cleaner signaling to thread
             _run_loop = False
 
+        def _activate_mindrove(_):
+            self._node.get_logger().info(
+                f"Activate mindrove service: {self._activate_mindrove_service.call(Trigger.Request())}"
+            )
+
+        def _deactivate_mindrove(_):
+            self._node.get_logger().info(
+                f"Deactivate mindrove service: {self._deactivate_mindrove_service.call(Trigger.Request())}"
+            )
+
             # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
             QPushButton("START FREEDRIVE EXERCISE", self): _start_freedrive_exercise_trajectory,
@@ -187,6 +213,8 @@ class URExerciseControlWindow(URControlQtWindow):
             QPushButton("MOVE TO START", self): _move_to_start,
             QPushButton("RUN EXERCISE TRAJECTORY", self): _run_exercise_trajectory,
             QPushButton("LOOP EXERCISE TRAJECTORY", self): _loop_exercise_trajectory,
+            QPushButton("ACTIVATE MINDROVE", self): _activate_mindrove,
+            QPushButton("DEACTIVATE MINDROVE", self): _deactivate_mindrove
         }
 
         for button, callback_func in _launch_map.items():

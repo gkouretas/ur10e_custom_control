@@ -24,7 +24,7 @@ from ur10e_typedefs import (
 
 from typing import Optional
 
-_DEFAULT_SERVICE_TIMEOUT_SEC = 10
+_DEFAULT_SERVICE_TIMEOUT_SEC = 120
 _DEFAULT_ACTION_TIMEOUT_SEC = 10
 
 class URRobot:
