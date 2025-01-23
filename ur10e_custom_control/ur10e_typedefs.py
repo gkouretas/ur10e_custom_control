@@ -15,7 +15,13 @@ from ur_dashboard_msgs.srv import (
     IsProgramRunning,
     Load,
 )
-from ur_msgs.srv import SetIO, GetRobotSoftwareVersion, SetSpeedSliderFraction
+from ur_msgs.srv import (
+    SetIO, 
+    GetRobotSoftwareVersion, 
+    SetSpeedSliderFraction,
+    SetForceModeParams,
+    SetFreedriveParams
+)
 
 # Control mode types
 from control_msgs.action import FollowJointTrajectory
@@ -54,13 +60,19 @@ class URService:
         SRV_SET_IO = __namespace + "/set_io"
         SRV_RESEND_ROBOT_PROGRAM = __namespace + "/resend_robot_program"
         SRV_SET_SPEED_SLIDER_FRACTION = __namespace + "/set_speed_slider"
-    
+        SRV_SET_FORCE_MODE_PARAMS = __namespace + "/set_force_mode_params"
+        
     class URConfigurationController(str, Enum):
         __namespace = "/ur_configuration_controller"
 
         SRV_GET_ROBOT_SOFTWARE_VERSION = __namespace + "/get_robot_software_version"
 
-    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController
+    class FreedriveController(str, Enum):
+        __namespace = "/freedrive_mode_controller"
+
+        SRV_SET_FREEDRIVE_PARAMS = __namespace + "/set_freedrive_params"
+
+    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController | FreedriveController
 
     _UR_SERVICE_MAP: dict[str, SrvTypeRequest] = {
         DashboardClient.SRV_POWER_ON: Trigger,
@@ -82,7 +94,9 @@ class URService:
         IOAndStatusController.SRV_SET_IO: SetIO,
         IOAndStatusController.SRV_RESEND_ROBOT_PROGRAM: Trigger,
         IOAndStatusController.SRV_SET_SPEED_SLIDER_FRACTION: SetSpeedSliderFraction,
-        URConfigurationController.SRV_GET_ROBOT_SOFTWARE_VERSION: GetRobotSoftwareVersion
+        IOAndStatusController.SRV_SET_FORCE_MODE_PARAMS: SetForceModeParams,
+        URConfigurationController.SRV_GET_ROBOT_SOFTWARE_VERSION: GetRobotSoftwareVersion,
+        FreedriveController.SRV_SET_FREEDRIVE_PARAMS: SetFreedriveParams
     }
 
     URServices: tuple[URServiceType] = tuple(_UR_SERVICE_MAP.keys())
