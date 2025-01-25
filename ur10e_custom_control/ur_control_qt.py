@@ -16,6 +16,8 @@ from ur10e_configs import (
     UR_HOME_POSE, UR_JOINT_LIST
 )
 
+from ur_msgs.srv import SetFreedriveParams
+
 from rclpy.node import Node
 
 from functools import partial
@@ -122,17 +124,18 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 if not _flag: 
                     _timer.stop()
                     print(f"Stopped robot response: {self._robot.stop_robot()}")
-                else: 
-                    self._robot.publish_cyclic_commands()
+                    self._robot.stop_position_control()
 
             _flag = True
-            self._robot.run_position_control()
+            
             _dialog = self._create_joint_slider_dialog(self._robot.set_position_by_joint_index, -np.pi/2, np.pi/2, np.pi/100)
             _dialog.finished.connect(__on_position_control_completion)
             
             _timer = QTimer(self)
             _timer.timeout.connect(__position_control_loop)
-            _timer.start(2)
+            _timer.start(100)
+
+            self._robot.run_position_control()
 
             _dialog.exec_()
 
@@ -148,22 +151,64 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 if not _flag: 
                     _timer.stop()
                     print(f"Stopped robot response: {self._robot.stop_robot()}")
-                else: 
-                    self._robot.publish_cyclic_commands()
+                    self._robot.stop_velocity_control()
 
             _flag = True
-            self._robot.run_velocity_control()
+
             _dialog = self._create_joint_slider_dialog(self._robot.set_velocity_by_joint_index, -np.pi/2, np.pi/2, np.pi/100)
             _dialog.finished.connect(__on_velocity_control_completion)
             
             _timer = QTimer(self)
             _timer.timeout.connect(__velocity_control_loop)
-            _timer.start(2)
+            _timer.start(100)
+
+            self._robot.run_velocity_control()
 
             _dialog.exec_()
 
             print(f"Stopped robot: {self._robot.stop_robot()}")
 
+        def __run_freedrive_control(_):
+            def __freedrive_button_pressed():
+                nonlocal _button_status
+                _button_status = True
+
+            def _freedrive_button_released():
+                nonlocal _button_status
+                _button_status = False
+
+            def __on_freedrive_control_completion():
+                nonlocal _flag
+                _flag = False
+
+            def __freedrive_control_loop():
+                nonlocal _timer, _flag, _button_status
+                if _button_status:
+                    # Ping the "alive" signal of freedrive if the button is being pressed
+                    self._robot.ping_freedrive()
+
+                if not _flag: 
+                    _timer.stop()
+                    self._robot.stop_freedrive_control()
+
+            _flag = True
+            _button_status = False
+
+            _dialog, _freedrive_button = self._create_freedrive_dialog()
+            _freedrive_button.pressed.connect(__freedrive_button_pressed)
+            _freedrive_button.released.connect(_freedrive_button_released)
+
+            _dialog.finished.connect(__on_freedrive_control_completion)
+            
+            _timer = QTimer(self)
+            _timer.timeout.connect(__freedrive_control_loop)
+            _timer.start(100)
+
+            self._robot.run_freedrive_control()
+
+            _dialog.exec_()
+
+            # print(f"Stopped robot: {self._robot.stop_robot()}")
 
         # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
@@ -171,7 +216,8 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
             QPushButton("SEND TRAJECTORY", self): __send_trajectory,
             QPushButton("HOME ROBOT", self): __home_robot,
             QPushButton("FORWARD POSITION", self): __run_forward_position_control,
-            QPushButton("FORWARD VELOCITY", self): __run_forward_velocity_control
+            QPushButton("FORWARD VELOCITY", self): __run_forward_velocity_control,
+            QPushButton("FREEDRIVE", self): __run_freedrive_control
         }
 
         for button, callback_func in _launch_map.items():
@@ -366,6 +412,54 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
 
         _dialog.setLayout(_layout)
         return _dialog
+    
+    def _create_freedrive_dialog(self) -> tuple[QDialog, QPushButton]:
+        def __update_dof_index_state(__state, __dof_index):
+            self._robot.set_dof_state(__state != 0, [__dof_index])
+
+        def __update_feature_state(__index: int):
+            nonlocal _feature_list
+            if __index == _feature_list.index("tool"):
+                self._robot.set_feature(SetFreedriveParams.Request.FEATURE_TOOL)
+            elif __index == _feature_list.index("base"):
+                self._robot.set_feature(SetFreedriveParams.Request.FEATURE_BASE)
+            else:
+                self._robot.set_feature(None)
+
+        _dialog = QDialog()
+        _layout = QGridLayout()
+
+        states = self._robot.get_freedrive_dofs()
+
+        dofs = ["x", "y", "z", "rx", "ry", "rz"]
+        _feature_list = ["default", "tool", "base"]
+
+        for dof_index, dof in enumerate(dofs):
+            _checkbox = QCheckBox()
+            _checkbox.setTristate(False)
+            _checkbox.setCheckState(Qt.CheckState.Checked if states[dof_index] else Qt.CheckState.Unchecked)
+            _checkbox.stateChanged.connect(partial(__update_dof_index_state, dof_index))
+
+            _layout.addWidget(QLabel(dof), 0, dof_index)
+            _layout.addWidget(_checkbox, 1, dof_index)
+
+        _feature = QComboBox()
+        for item in _feature_list:
+            _feature.addItem(item)
+            
+        _feature.setCurrentIndex(_feature_list.index("default"))
+
+        _feature.currentIndexChanged.connect(__update_feature_state)
+
+        _layout.addWidget(QLabel("Feature"), 0, len(dofs))
+        _layout.addWidget(_feature, 1, len(dofs))
+
+        _freedrive_button = QPushButton("RUN FREEDRIVE")
+        _layout.addWidget(_freedrive_button, 2, 0, 2, len(dofs)+1)
+
+        _dialog.setLayout(_layout)
+
+        return _dialog, _freedrive_button
 
     def _typed_data(self, text: str, field_type: str):
         _INT_TYPE = ('int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64')

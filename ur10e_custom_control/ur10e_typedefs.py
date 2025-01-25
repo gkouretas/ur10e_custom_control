@@ -26,6 +26,7 @@ from ur_msgs.srv import (
 # Control mode types
 from control_msgs.action import FollowJointTrajectory
 from std_msgs.msg._float64_multi_array import Float64MultiArray
+from std_msgs.msg._bool import Bool
 
 class URService:
     # TODO: getter for srv
@@ -122,6 +123,7 @@ class URControlModes(str, Enum):
     SCALED_JOINT_TRAJECTORY = "scaled_joint_trajectory_controller"
     FORWARD_VELOCITY = "forward_velocity_controller"
     FORWARD_POSITION = "forward_position_controller"
+    FREEDRIVE_MODE = "freedrive_mode_controller"
 
     @property
     def has_action_client(self) -> bool:
@@ -145,6 +147,8 @@ class URControlModes(str, Enum):
     def publish_topic(self) -> type:
         if self.value == self.FORWARD_VELOCITY or self.value == self.FORWARD_POSITION:
             return Float64MultiArray
+        elif self.value == self.FREEDRIVE_MODE:
+            return Bool
         else:
             return None
         
@@ -152,9 +156,13 @@ class URControlModes(str, Enum):
     def publish_topic_name(self) -> str:
         if self.value == self.FORWARD_VELOCITY or self.value == self.FORWARD_POSITION:
             return "/" + self.value + "/commands"
+        elif self.value == self.FREEDRIVE_MODE:
+            return "/" + self.value + "/enable_freedrive_mode"
         else:
             return None
         
     @property
     def is_cyclic(self) -> bool:
-        return self.value == self.FORWARD_VELOCITY or self.value == self.FORWARD_POSITION
+        return self.value == self.FORWARD_VELOCITY or \
+            self.value == self.FORWARD_POSITION or \
+                self.value == self.FREEDRIVE_MODE

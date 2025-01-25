@@ -1,4 +1,7 @@
 import rclpy
+import threading
+import copy
+
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 
@@ -22,7 +25,9 @@ from ur10e_typedefs import (
     URControlModes
 )
 
-from typing import Optional
+from ur_msgs.srv import SetFreedriveParams
+
+from typing import Optional, Iterable, Literal
 
 _DEFAULT_SERVICE_TIMEOUT_SEC = 120
 _DEFAULT_ACTION_TIMEOUT_SEC = 10
@@ -46,6 +51,37 @@ class URRobot:
         
         self._control_msg: dict[URControlModes, type] = \
             {mode: mode.publish_topic() for mode in URControlModes if mode.is_cyclic}
+        
+        self._freedrive_signal = threading.Event()
+        
+        self._control_loop_timer = self._node.create_timer(
+            timer_period_sec = 1.0 / 500.0, # 500 Hz
+            callback = self.publish_cyclic_commands
+        )
+
+        # No autostart in ROS2 humble, it is in rolling though ._.
+        # https://github.com/ros2/rclpy/pull/1138
+        self._control_loop_timer.cancel()
+
+        self._freedrive_timer = self._node.create_timer(
+            timer_period_sec = 1.0,
+            callback = self.disable_freedrive
+        )
+
+        self._freedrive_dofs: list[bool] = [True, True, True, True, True, True]
+        self._feature: Optional[int] = None
+
+        self._active_control_mode: URControlModes = None
+
+    def _start_cyclic_control(self):
+        self._control_loop_timer.reset()
+
+    def _stop_cyclic_control(self):
+        if not self._control_loop_timer.is_canceled():
+            self._control_loop_timer.cancel()
+
+    def get_freedrive_dofs(self):
+        return copy.deepcopy(self._freedrive_dofs)
 
     def initialize_service(self, srv: URService.URServiceType) -> None:
         if self.service_clients[srv] is not None: 
@@ -178,15 +214,37 @@ class URRobot:
             
         self._control_msg[URControlModes.FORWARD_VELOCITY].data = [0.0] * len(UR_JOINT_LIST)
         
+    def run_freedrive_control(self):
+        # self.set_controllers(controllers = [URControlModes.FREEDRIVE_MODE])
+
+        if self._cyclic_publishers[URControlModes.FREEDRIVE_MODE] is None:
+            self._cyclic_publishers[URControlModes.FREEDRIVE_MODE] = \
+                self._create_controller_publisher(
+                    URControlModes.FREEDRIVE_MODE
+                )
+            
+        self._active_control_mode = URControlModes.FREEDRIVE_MODE
+        self._start_cyclic_control()
+
+    def stop_cyclic_control(self):
+        self._active_control_mode = None
+        self._stop_cyclic_control()
+
+    stop_position_control = stop_cyclic_control
+    stop_velocity_control = stop_cyclic_control
+    stop_freedrive_control = stop_cyclic_control
+
     def publish_cyclic_commands(self):
-        for mode in self._cyclic_publishers.keys():
-            if self._cyclic_publishers[mode] is not None:
-                msg = mode.publish_topic()
-                msg = self._control_msg[mode]
-                self._node.get_logger().info(f"Publishing: {msg} for {mode} from {self._cyclic_publishers[mode]}")
-                self._cyclic_publishers[mode].publish(msg)
+        mode = self._active_control_mode
+        if mode is None: return
+
+        msg = mode.publish_topic()
+        msg = self._control_msg[mode]
+        self._node.get_logger().debug(f"Publishing: {msg} for {mode} from {self._cyclic_publishers[mode]}")
+        self._cyclic_publishers[mode].publish(msg)
 
     def _create_controller_publisher(self, control_mode: URControlModes):
+        self._node.get_logger().info(f"{control_mode.publish_topic}, {control_mode.publish_topic_name}, {UR_QOS_PROFILE}")
         return self._node.create_publisher(
             control_mode.publish_topic, 
             control_mode.publish_topic_name, 
@@ -210,3 +268,38 @@ class URRobot:
         # TODO: mutex
         assert index >= 0 and index < len(UR_JOINT_LIST), f"Invalid joint index: {index}"
         self._control_msg[URControlModes.FORWARD_VELOCITY].data[index] = v
+
+    def set_dof_state(self, state: bool, dofs: Iterable[int]):
+        _kwargs = {"type": SetFreedriveParams.Request.TYPE_STRING}
+        if self._feature is not None:
+            _kwargs["feature_constant"] = self._feature
+
+        for dof in dofs:
+            self._freedrive_dofs[dof] = state
+
+        _kwargs["free_axes"] = self._freedrive_dofs
+
+        self.call_service(URService.FreedriveController.SRV_SET_FREEDRIVE_PARAMS,
+                          SetFreedriveParams.Request(**_kwargs))
+        
+    def set_feature(self, feature: Optional[int]):
+        _kwargs = {"type": SetFreedriveParams.Request.TYPE_STRING, "free_axes": self._freedrive_dofs}
+
+        if feature is None:
+            self._feature = None
+        else:
+            assert feature == SetFreedriveParams.Request.FEATURE_BASE or feature == SetFreedriveParams.Request.FEATURE_TOOL
+            self._feature = feature
+            _kwargs["feature_constant"] = self._feature
+
+        # TODO: add support for freedrive pose
+        
+        self.call_service(URService.FreedriveController.SRV_SET_FREEDRIVE_PARAMS,
+                          SetFreedriveParams.Request(**_kwargs))
+
+    def ping_freedrive(self):
+        self._control_msg[URControlModes.FREEDRIVE_MODE].data = True
+        self._freedrive_timer.reset()
+
+    def disable_freedrive(self):
+        self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
