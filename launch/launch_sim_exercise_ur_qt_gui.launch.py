@@ -10,7 +10,7 @@ _hard_coded_args = {
     "ur_type": "ur10e",
     "robot_ip": "192.168.57.101",
     "launch_simulation": "true",
-    "simulation_version": "5.9.4",
+    "simulation_version": "latest",
     "headless_mode": "true"
 }
 

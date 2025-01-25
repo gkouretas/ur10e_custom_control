@@ -204,12 +204,14 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
 
         _fields_and_field_types = _service_type.Request.get_fields_and_field_types()
         if _fields_and_field_types == {}:
-            print(f"Request return: {self._robot.call_service(service, _service_type.Request())}")
+            self._node.get_logger().info(f"Request return: {self._robot.call_service(service, _service_type.Request())}")
         else:
             service_kwargs = self._create_service_kwargs_from_dialog(service, _fields_and_field_types)
             if service_kwargs is not None:
-                print(_service_type.Request(**service_kwargs))
-                print(f"Request return: {self._robot.call_service(service, _service_type.Request(**service_kwargs))}")
+                self._node.get_logger().info(f"Request: {_service_type.Request(**service_kwargs)}")
+                self._node.get_logger().info(f"Request return: {self._robot.call_service(service, _service_type.Request(**service_kwargs))}")
+            else:
+                self._node.get_logger().info("No service kwargs registered")
 
     def _create_signature_kwargs_from_dialog(self, name: str, signature: inspect.Signature):
         if signature.parameters == {}:
@@ -380,8 +382,16 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 return [self._typed_data(text[1:-1].strip(), field_type = _inner_type)]
             else:
                 return [self._typed_data(x.strip(), field_type = _inner_type) for x in text[1:-1].split(",")]
+        elif "[" in field_type and "]" in field_type:
+            _inner_type = field_type.split("[")[0]
+            _elements = [x for x in text.split(",")]
+            _num_elements = field_type.split("[")[1].split("]")[0]
+            if len(_num_elements) != 0:
+                assert len(_elements) == int(_num_elements), f"Invalid number of elements: {len(_elements)} != {int(_num_elements)}"
+
+            return [self._typed_data(x.strip(), field_type = _inner_type) for x in _elements]
         elif "boolean" in field_type:
-            return True if text.lower() == "true" else False
+            return True if (text.lower() == "true" or text == "1") else False
         elif field_type in _INT_TYPE:
             return int(text)
         elif field_type in _FLOAT_TYPE:
