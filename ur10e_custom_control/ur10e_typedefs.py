@@ -19,8 +19,10 @@ from ur_msgs.srv import (
     SetIO, 
     GetRobotSoftwareVersion, 
     SetSpeedSliderFraction,
+    SetForceMode,
     SetForceModeParams,
-    SetFreedriveParams
+    SetFreedriveParams,
+    
 )
 
 # Control mode types
@@ -62,18 +64,25 @@ class URService:
         SRV_RESEND_ROBOT_PROGRAM = __namespace + "/resend_robot_program"
         SRV_SET_SPEED_SLIDER_FRACTION = __namespace + "/set_speed_slider"
         SRV_SET_FORCE_MODE_PARAMS = __namespace + "/set_force_mode_params"
-        
+        SRV_ZERO_FT_SENSOR = __namespace + "/zero_ftsensor"
+
     class URConfigurationController(str, Enum):
         __namespace = "/ur_configuration_controller"
 
         SRV_GET_ROBOT_SOFTWARE_VERSION = __namespace + "/get_robot_software_version"
+
+    class ForceModeController(str, Enum):
+        __namespace = "/force_mode_controller"
+
+        SRV_START_FORCE_MODE = __namespace + "/start_force_mode"
+        SRV_STOP_FORCE_MODE = __namespace + "/stop_force_mode"
 
     class FreedriveController(str, Enum):
         __namespace = "/freedrive_mode_controller"
 
         SRV_SET_FREEDRIVE_PARAMS = __namespace + "/set_freedrive_params"
 
-    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController | FreedriveController
+    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController | ForceModeController | FreedriveController
 
     _UR_SERVICE_MAP: dict[str, SrvTypeRequest] = {
         DashboardClient.SRV_POWER_ON: Trigger,
@@ -96,7 +105,10 @@ class URService:
         IOAndStatusController.SRV_RESEND_ROBOT_PROGRAM: Trigger,
         IOAndStatusController.SRV_SET_SPEED_SLIDER_FRACTION: SetSpeedSliderFraction,
         IOAndStatusController.SRV_SET_FORCE_MODE_PARAMS: SetForceModeParams,
+        IOAndStatusController.SRV_ZERO_FT_SENSOR: Trigger,
         URConfigurationController.SRV_GET_ROBOT_SOFTWARE_VERSION: GetRobotSoftwareVersion,
+        ForceModeController.SRV_START_FORCE_MODE: SetForceMode,
+        ForceModeController.SRV_STOP_FORCE_MODE: Trigger,
         FreedriveController.SRV_SET_FREEDRIVE_PARAMS: SetFreedriveParams
     }
 

@@ -2,6 +2,7 @@ import sys
 import inspect
 import numpy as np
 import threading
+import time
 
 import rclpy
 from rclpy.subscription import Subscription
@@ -21,7 +22,11 @@ from ur_msgs.srv import SetFreedriveParams
 from rclpy.node import Node
 
 from functools import partial
-from builtin_interfaces.msg import Duration
+from std_msgs.msg import Header
+from builtin_interfaces.msg import Duration, Time
+from geometry_msgs.msg import (
+    Pose, PoseStamped, Wrench, Twist, Vector3, Point, Quaternion
+)
 
 class URControlQtWindow(QMainWindow): # TODO: make ROS node
     def __init__(self, node: Node):
@@ -495,6 +500,52 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 sec = int(float(text)), 
                 nanosec = int((float(text) - int(float(text))) * 1e9)
             )
+        elif "PoseStamped" in field_type:
+            split_str = text[:-1].split("]")
+            assert len(split_str) == 2, f"Unexpected # of arrays (expected 2) {text}"
+            
+            position_raw, orientation_raw = split_str
+            position = [float(x.strip()) for x in position_raw.split("[")[-1].split(",")]
+            assert len(position) == 3, f"Invalid parsed length of position (raw buffer: {position_raw})"
+
+            orientation = [float(x.strip()) for x in orientation_raw.split("[")[-1].split(",")]
+            assert len(orientation) == 4, f"Invalid parsed length of orientation (raw buffer: {orientation_raw})"
+
+            t = time.time()
+
+            return PoseStamped(
+                pose = Pose(
+                    position = Point(x = position[0], y = position[1], z = position[2]),
+                    orientation = Quaternion(x = orientation[0], y = orientation[1], z = orientation[2], w = orientation[3]),
+                ),
+                header = Header(stamp=Time(sec = int(t), nanosec = int((t - int(t))*1e9)), frame_id="world")
+            )
+        elif "Wrench" in field_type:
+            split_str = text[:-1].split("]")
+            assert len(split_str) == 2, f"Unexpected # of arrays (expected 2) {text}"
+
+            force_raw, torque_raw = split_str
+            force = [float(x.strip()) for x in force_raw.split("[")[-1].split(",")]
+            assert len(force) == 3, f"Invalid parsed length of force vector (raw buffer: {force_raw})"
+
+            torque = [float(x.strip()) for x in torque_raw.split("[")[-1].split(",")]
+            assert len(torque) == 3, f"Invalid parsed length of torque (raw buffer: {torque_raw})"
+
+            return Wrench(force = Vector3(x = force[0], y = force[1], z = force[2]),
+                          torque = Vector3(x = torque[0], y = torque[1], z = torque[2]))
+        elif "Twist" in field_type:
+            split_str = text[:-1].split("]")
+            assert len(split_str) == 2, f"Unexpected # of arrays (expected 2) {text}"
+
+            linear_raw, angular_raw = split_str
+            linear = [float(x.strip()) for x in linear_raw.split("[")[-1].split(",")]
+            assert len(linear) == 3, f"Invalid parsed length of linear vector (raw buffer: {linear_raw})"
+
+            angular = [float(x.strip()) for x in angular_raw.split("[")[-1].split(",")]
+            assert len(angular) == 3, f"Invalid parsed length of angular vector (raw buffer: {angular_raw})"
+
+            return Twist(linear = Vector3(x = linear[0], y = linear[1], z = linear[2]),
+                         angular = Vector3(x = angular[0], y = angular[1], z = angular[2]))
         else:
             raise TypeError(f"Unknown type: {field_type}")
 
