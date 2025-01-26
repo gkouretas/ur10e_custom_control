@@ -263,8 +263,14 @@ def main():
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     executor.add_node(main_window._robot._node)
+    executor.add_node(main_window._robot._service_node)
 
-    threading.Thread(target = executor.spin, daemon = False).start()
+    def _spin():
+        while executor._context.ok() and not executor._is_shutdown:
+            node.get_logger().debug("Executor spin alive")
+            executor.spin_once() 
+
+    threading.Thread(target = _spin, daemon = False).start()
     
     # Run the application's event loop
     sys.exit(app.exec_())

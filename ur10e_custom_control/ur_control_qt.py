@@ -414,7 +414,7 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
         return _dialog
     
     def _create_freedrive_dialog(self) -> tuple[QDialog, QPushButton]:
-        def __update_dof_index_state(__state, __dof_index):
+        def __update_dof_index_state(__dof_index, __state):
             self._robot.set_dof_state(__state != 0, [__dof_index])
 
         def __update_feature_state(__index: int):

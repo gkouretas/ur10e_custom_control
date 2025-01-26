@@ -1,4 +1,5 @@
 import rclpy
+import time
 import threading
 import copy
 
@@ -9,6 +10,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.client import Client, SrvTypeRequest, Future
 from rclpy.publisher import Publisher
+from rclpy.executors import SingleThreadedExecutor
 
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from controller_manager_msgs.srv import SwitchController
@@ -39,6 +41,10 @@ class URRobot:
         else:
             self._node = node
 
+        self._lock = threading.RLock()
+
+        self._service_node = Node("ur_robot_srv_node")
+
         self.service_clients: dict[URService.URServiceType, Optional[Client]] = {
             k: None for k in URService.URServices
         }
@@ -47,7 +53,7 @@ class URRobot:
             {mode: None for mode in URControlModes if mode.has_action_client}
         
         self._cyclic_publishers: dict[URControlModes, Publisher] = \
-            {mode: None for mode in URControlModes if mode.is_cyclic}
+            {mode: self._create_controller_publisher(mode) for mode in URControlModes if mode.is_cyclic}
         
         self._control_msg: dict[URControlModes, type] = \
             {mode: mode.publish_topic() for mode in URControlModes if mode.is_cyclic}
@@ -59,9 +65,11 @@ class URRobot:
             callback = self.publish_cyclic_commands
         )
 
+        self._future_exec = SingleThreadedExecutor()
+
         # No autostart in ROS2 humble, it is in rolling though ._.
         # https://github.com/ros2/rclpy/pull/1138
-        self._control_loop_timer.cancel()
+        #self._control_loop_timer.cancel()
 
         self._freedrive_timer = self._node.create_timer(
             timer_period_sec = 1.0,
@@ -74,11 +82,12 @@ class URRobot:
         self._active_control_mode: URControlModes = None
 
     def _start_cyclic_control(self):
+        self._node.get_logger().info("Reset timer")
         self._control_loop_timer.reset()
 
     def _stop_cyclic_control(self):
-        if not self._control_loop_timer.is_canceled():
-            self._control_loop_timer.cancel()
+        with self._lock:
+            self._active_control_mode = None
 
     def get_freedrive_dofs(self):
         return copy.deepcopy(self._freedrive_dofs)
@@ -88,7 +97,7 @@ class URRobot:
             self._node.get_logger().info(f"Already have defined service for {srv}, ignoring")
         else:
             self.service_clients[srv] = URService.init_service(
-                self._node, 
+                self._service_node, 
                 srv,
                 timeout = _DEFAULT_SERVICE_TIMEOUT_SEC
             )
@@ -107,7 +116,7 @@ class URRobot:
         service = self.service_clients.get(srv)
         
         if service is None:
-            self.service_clients[srv] = URService.init_service(self._node, srv, _DEFAULT_SERVICE_TIMEOUT_SEC)
+            self.service_clients[srv] = URService.init_service(self._service_node, srv, _DEFAULT_SERVICE_TIMEOUT_SEC)
             service = self.service_clients[srv]
         if request is None:
             request: SrvTypeRequest = URService.get_service_type(srv)
@@ -115,7 +124,8 @@ class URRobot:
             request = request.Request()
 
         future: Future = service.call_async(request)
-        rclpy.spin_until_future_complete(self._node, future)
+        rclpy.spin_until_future_complete(self._service_node, future)
+        #while not future.done(): time.sleep(0.01)
         if future.result() is not None:
             return future.result()
         else:
@@ -124,7 +134,8 @@ class URRobot:
     def call_action(self, ac_client: ActionClient, goal, blocking: bool):
         future = ac_client.send_goal_async(goal)
         if blocking:
-            rclpy.spin_until_future_complete(self._node, future)
+            rclpy.spin_until_future_complete(self._service_node, future)
+            #while not future.done(): time.sleep(0.01)
         else:
             future.add_done_callback(self.get_result_callback)
 
@@ -135,7 +146,8 @@ class URRobot:
 
     def get_result(self, ac_client: ActionClient, goal_response):
         future_res = ac_client._get_result_async(goal_response)
-        rclpy.spin_until_future_complete(self._node, future_res)
+        rclpy.spin_until_future_complete(self._service_node, future_res)
+        #while not future_res.done(): time.sleep(0.01)
         if future_res.result() is not None:
             return future_res.result().result
         else:
@@ -235,16 +247,18 @@ class URRobot:
     stop_freedrive_control = stop_cyclic_control
 
     def publish_cyclic_commands(self):
-        mode = self._active_control_mode
+        with self._lock:
+            mode = self._active_control_mode
+
         if mode is None: return
 
         msg = mode.publish_topic()
         msg = self._control_msg[mode]
+
         self._node.get_logger().debug(f"Publishing: {msg} for {mode} from {self._cyclic_publishers[mode]}")
         self._cyclic_publishers[mode].publish(msg)
 
     def _create_controller_publisher(self, control_mode: URControlModes):
-        self._node.get_logger().info(f"{control_mode.publish_topic}, {control_mode.publish_topic_name}, {UR_QOS_PROFILE}")
         return self._node.create_publisher(
             control_mode.publish_topic, 
             control_mode.publish_topic_name, 
@@ -276,7 +290,8 @@ class URRobot:
 
         for dof in dofs:
             self._freedrive_dofs[dof] = state
-
+            self._node.get_logger().info(f"DoF index {dof} to {state}")
+        self._node.get_logger().info(f"Free axes: {self._freedrive_dofs}")
         _kwargs["free_axes"] = self._freedrive_dofs
 
         self.call_service(URService.FreedriveController.SRV_SET_FREEDRIVE_PARAMS,
