@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import *
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped
 from builtin_interfaces.msg import Duration
 
 from std_srvs.srv import Trigger
@@ -59,8 +60,10 @@ class URExerciseControlWindow(URControlQtWindow):
             # TODO: set freedrive mode
             # TODO: verify we are in freedrive mode???
 
-            assert self.create_subscriber(msg_type = JointState, topic = "/joint_states", callback = self._update_state, qos_profile = UR_QOS_PROFILE), \
-                "Unable to create joint position subscriber"
+            # assert self.create_subscriber(msg_type = JointState, topic = "/joint_states", callback = self._update_state, qos_profile = UR_QOS_PROFILE), \
+            #     "Unable to create joint position subscriber"
+            assert self.create_subscriber(msg_type = PoseStamped, topic = "tcp_pose_broadcaster/pose", callback = self._update_state, qos_profile = UR_QOS_PROFILE), \
+                "Unable to create TCP pose broadcaster subscriber"
             
             self._state_lock.acquire()
             self._exercise_traj_waypoints.clear()
@@ -221,7 +224,8 @@ class URExerciseControlWindow(URControlQtWindow):
             button.clicked.connect(partial(callback_func, button))
             layout.addWidget(button)
 
-    def _update_state(self, msg: JointState):
+    # def _update_state(self, msg: JointState):
+    def _update_state(self, msg: PoseStamped):
         self._state_lock.acquire()
 
         if self._state_reception_counter == -1:
@@ -232,8 +236,8 @@ class URExerciseControlWindow(URControlQtWindow):
         # Add 50 waypoints/sec
         # TODO: make waypoint decimation configurable
         if self._state_reception_counter % 10 == 0:
-            print(f"Adding {msg.position} at {msg.header.stamp}")
-            self._exercise_traj_waypoints.append(msg.position)
+            self._node.get_logger().debug(f"Adding {msg.pose} at {msg.header.stamp}")
+            self._exercise_traj_waypoints.append(msg.pose)
             if len(self._exercise_traj_time) > 0:
                 _time_f64 = (msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9) - \
                 (self._exercise_traj_time[0].sec + self._exercise_traj_time[0].nanosec*1e-9)
