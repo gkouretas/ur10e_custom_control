@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import *
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Pose
 from builtin_interfaces.msg import Duration
 
 from std_srvs.srv import Trigger
@@ -24,13 +24,14 @@ from exercise_decoder_node.exercise_decoder_node_configs import (
 from typing import Callable
 from functools import partial
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 @dataclass
 class Exercise:
     name: str
-    waypoints: list[list[float]]
-    duration: list[Duration] # TODO: can a Duration object be pickled?
+    poses: list[PoseStamped]
+    joint_angles: list[list[float]]
+    duration: list[Duration]
 
 class URExerciseControlWindow(URControlQtWindow):
     def __init__(self, node: Node):
@@ -39,8 +40,10 @@ class URExerciseControlWindow(URControlQtWindow):
         self.service_tab = self._create_tab(name = "Exercise Tab", layout = QVBoxLayout(), tab_create_func = self.__conf_exercise_tab)
         self._state_lock = threading.RLock()
 
-        self._state_reception_counter = 0
-        self._exercise_traj_waypoints: list[list[float]] = []
+        self._pose_reception_counter = 0
+        self._joint_angle_reception_counter = 0
+        self._exercise_traj_poses: list[PoseStamped] = []
+        self._exercise_traj_joint_angles: list[list[float]] = []
         self._exercise_traj_time: list[Duration] = []
         self._exercise_traj_ready: bool = False
 
@@ -60,15 +63,16 @@ class URExerciseControlWindow(URControlQtWindow):
             # TODO: set freedrive mode
             # TODO: verify we are in freedrive mode???
 
-            # assert self.create_subscriber(msg_type = JointState, topic = "/joint_states", callback = self._update_state, qos_profile = UR_QOS_PROFILE), \
-            #     "Unable to create joint position subscriber"
-            assert self.create_subscriber(msg_type = PoseStamped, topic = "tcp_pose_broadcaster/pose", callback = self._update_state, qos_profile = UR_QOS_PROFILE), \
+            assert self.create_subscriber(msg_type = JointState, topic = "/joint_states", callback = self._update_joint_angles, qos_profile = UR_QOS_PROFILE), \
+                "Unable to create joint position subscriber"
+            assert self.create_subscriber(msg_type = PoseStamped, topic = "tcp_pose_broadcaster/pose", callback = self._update_pose, qos_profile = UR_QOS_PROFILE), \
                 "Unable to create TCP pose broadcaster subscriber"
             
             self._state_lock.acquire()
-            self._exercise_traj_waypoints.clear()
+            self._exercise_traj_poses.clear()
             self._exercise_traj_time.clear()
-            self._state_reception_counter = 0
+            self._pose_reception_counter = 0
+            self._joint_angle_reception_counter = 0
             self._state_lock.release()
 
         def _stop_freedrive_exercise_trajectory(_):
@@ -78,31 +82,43 @@ class URExerciseControlWindow(URControlQtWindow):
 
             # Subtract initial timestamp
             self._state_lock.acquire()
-            self._state_reception_counter = -1
+            self._pose_reception_counter = -1
+            self._joint_angle_reception_counter = -1
             self._exercise_traj_ready = True
             self._state_lock.release()
 
-            print("Trajectory")
-            for w, d in zip(self._exercise_traj_waypoints, self._exercise_traj_time):
-                print(f"Duration: {d.sec + d.nanosec*1e-9}s, pos: {w}")
+            self._node.get_logger().debug("Trajectory")
+            for w, d in zip(self._exercise_traj_poses, self._exercise_traj_time):
+                self._node.get_logger().debug(f"Duration: {d.sec + d.nanosec*1e-9}s, pos: {w}")
 
         def _move_to_start(_):
             # 10s trajectory to get to home pose
             self._robot.send_trajectory(
-                waypts = [self._exercise_traj_waypoints[0]],
+                waypts = [self._exercise_traj_joint_angles[0]],
                 time_vec = [Duration(sec = 10)]
             )
 
         def _run_exercise_trajectory(_):
             if self._robot is None: return
-            if len(self._exercise_traj_waypoints) > 1:
+            if len(self._exercise_traj_joint_angles) > 1:
                 self._robot.send_trajectory(
-                    waypts = self._exercise_traj_waypoints[1:], 
+                    waypts = self._exercise_traj_joint_angles[1:], 
                     time_vec = self._exercise_traj_time[1:],
                     blocking = True
                 )
             else:
                 self._node.get_logger().warning("No waypoints configured")
+
+        def _run_dynamic_force_mode(_):
+            if self._robot is None: return
+            if len(self._exercise_traj_joint_angles) > 1:
+                self._robot.run_dynamic_force_mode(
+                    poses = self._exercise_traj_poses[1:], 
+                    blocking = True
+                )
+            else:
+                self._node.get_logger().warning("No waypoints configured")
+
 
         def _save_exercise_trajectory(_):
             if not self._exercise_traj_ready:
@@ -121,14 +137,19 @@ class URExerciseControlWindow(URControlQtWindow):
             if fp:
                 self._node.get_logger().info(f"Saving exercise to {fp}")
 
+                # Clamp the length to the shortest list between the logged poses and joint angles, since they
+                # may have a different # of elements.
+                _min_length = min((len(self._exercise_traj_poses), len(self._exercise_traj_joint_angles)))
+                
                 _exercise = Exercise(
                     name = os.path.basename(fp).split(".")[0],
-                    waypoints = self._exercise_traj_waypoints,
-                    duration = self._exercise_traj_time
+                    poses = self._exercise_traj_poses[:_min_length],
+                    joint_angles = self._exercise_traj_joint_angles[:_min_length],
+                    duration = self._exercise_traj_time[:_min_length]
                 )
 
                 with open(fp, "wb") as _pickled_file:
-                    pickle.dump(_exercise, _pickled_file)
+                    pickle.dump(asdict(_exercise), _pickled_file)
             else:
                 self._node.get_logger().info("No output selected, not saving file")
 
@@ -147,15 +168,19 @@ class URExerciseControlWindow(URControlQtWindow):
 
                 with open(fp, "rb") as _pickled_file:
                     _obj = pickle.load(_pickled_file)
-                    if not isinstance(_obj, Exercise):
+                    try:
+                        _obj = Exercise(**_obj)
+                    except Exception:
                         self._node.get_logger().error("Invalid exercise")
                     else:
                         self._node.get_logger().info(f"Loaded trajectory {_obj.name}")
                         with self._state_lock:
-                            self._exercise_traj_waypoints = _obj.waypoints
+                            self._exercise_traj_joint_angles = _obj.joint_angles
+                            self._exercise_traj_poses = _obj.poses
                             self._exercise_traj_time = _obj.duration
 
-                            self._state_reception_counter = -1
+                            self._pose_reception_counter = -1
+                            self._joint_angle_reception_counter = -1
                             self._exercise_traj_ready = True
                         
             else:
@@ -165,9 +190,9 @@ class URExerciseControlWindow(URControlQtWindow):
         def _run_exercise_loop():
             reverse = False
             while True:
-                if len(self._exercise_traj_waypoints) > 1:
+                if len(self._exercise_traj_poses) > 1:
                     self._robot.send_trajectory(
-                        waypts = self._exercise_traj_waypoints[1:] if not reverse else self._exercise_traj_waypoints[::-1][1:], 
+                        waypts = self._exercise_traj_joint_angles[1:] if not reverse else self._exercise_traj_joint_angles[::-1][1:], 
                         time_vec = self._exercise_traj_time[1:], # TODO: reverse time vector
                         blocking = True
                     )
@@ -217,27 +242,44 @@ class URExerciseControlWindow(URControlQtWindow):
             QPushButton("RUN EXERCISE TRAJECTORY", self): _run_exercise_trajectory,
             QPushButton("LOOP EXERCISE TRAJECTORY", self): _loop_exercise_trajectory,
             QPushButton("ACTIVATE MINDROVE", self): _activate_mindrove,
-            QPushButton("DEACTIVATE MINDROVE", self): _deactivate_mindrove
+            QPushButton("DEACTIVATE MINDROVE", self): _deactivate_mindrove,
+            QPushButton("RUN DYNAMIC FORCE MODE", self): _run_dynamic_force_mode,
         }
 
         for button, callback_func in _launch_map.items():
             button.clicked.connect(partial(callback_func, button))
             layout.addWidget(button)
 
-    # def _update_state(self, msg: JointState):
-    def _update_state(self, msg: PoseStamped):
+    def _update_pose(self, msg: PoseStamped):
         self._state_lock.acquire()
 
-        if self._state_reception_counter == -1:
+        if self._pose_reception_counter == -1:
             # "Invalid" counter, somewhat hacky...
             self._state_lock.release()
             return
 
         # Add 50 waypoints/sec
         # TODO: make waypoint decimation configurable
-        if self._state_reception_counter % 10 == 0:
-            self._node.get_logger().debug(f"Adding {msg.pose} at {msg.header.stamp}")
-            self._exercise_traj_waypoints.append(msg.pose)
+        if self._pose_reception_counter % 10 == 0:
+            self._node.get_logger().info(f"Adding {msg.pose} at {msg.header.stamp}")
+            self._exercise_traj_poses.append(msg)
+        
+        self._pose_reception_counter += 1
+        self._state_lock.release()
+
+    def _update_joint_angles(self, msg: JointState):
+        self._state_lock.acquire()
+
+        if self._joint_angle_reception_counter == -1:
+            # "Invalid" counter, somewhat hacky...
+            self._state_lock.release()
+            return
+
+        # Add 50 waypoints/sec
+        # TODO: make waypoint decimation configurable
+        if self._joint_angle_reception_counter % 10 == 0:
+            self._node.get_logger().info(f"Adding {msg.position} at {msg.header.stamp}")
+            self._exercise_traj_joint_angles.append(msg.position)
             if len(self._exercise_traj_time) > 0:
                 _time_f64 = (msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9) - \
                 (self._exercise_traj_time[0].sec + self._exercise_traj_time[0].nanosec*1e-9)
@@ -249,7 +291,7 @@ class URExerciseControlWindow(URControlQtWindow):
                     Duration(sec = msg.header.stamp.sec, nanosec = msg.header.stamp.nanosec)
                 )
         
-        self._state_reception_counter += 1
+        self._joint_angle_reception_counter += 1
         self._state_lock.release()
 
 def main():

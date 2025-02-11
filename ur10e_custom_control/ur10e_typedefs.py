@@ -21,9 +21,10 @@ from ur_msgs.srv import (
     SetSpeedSliderFraction,
     SetForceMode,
     SetForceModeParams,
-    SetFreedriveParams,
-    
+    SetFreedriveParams
 )
+
+from ur_msgs.action import DynamicForceModePath
 
 # Control mode types
 from control_msgs.action import FollowJointTrajectory
@@ -136,15 +137,18 @@ class URControlModes(str, Enum):
     FORWARD_VELOCITY = "forward_velocity_controller"
     FORWARD_POSITION = "forward_position_controller"
     FREEDRIVE_MODE = "freedrive_mode_controller"
+    DYNAMIC_FORCE_MODE = "dynamic_path_force_mode_controller"
 
     @property
     def has_action_client(self) -> bool:
-        return self.value == self.JOINT_TRAJECTORY or self.value == self.SCALED_JOINT_TRAJECTORY
+        return self.value == self.JOINT_TRAJECTORY or self.value == self.SCALED_JOINT_TRAJECTORY or self.value == self.DYNAMIC_FORCE_MODE
 
     @property
     def action_type(self) -> type:
         if self.value == self.JOINT_TRAJECTORY or self.value == self.SCALED_JOINT_TRAJECTORY:
             return FollowJointTrajectory
+        elif self.value == self.DYNAMIC_FORCE_MODE:
+            return DynamicForceModePath
         else:
             return None
 
@@ -152,6 +156,8 @@ class URControlModes(str, Enum):
     def action_type_topic(self) -> str:
         if self.value == self.JOINT_TRAJECTORY or self.value == self.SCALED_JOINT_TRAJECTORY:
             return self.value + "/follow_joint_trajectory"
+        elif self.value == self.DYNAMIC_FORCE_MODE:
+            return self.value + "/dynamic_force_mode_path"
         else:
             raise None
         

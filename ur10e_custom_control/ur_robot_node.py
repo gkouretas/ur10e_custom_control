@@ -5,6 +5,9 @@ import copy
 
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
+from ur_msgs.action import DynamicForceModePath
+from geometry_msgs.msg import Pose, PoseStamped, Wrench, Vector3, Quaternion, Twist, Point
+from nav_msgs.msg import Path
 
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -191,6 +194,43 @@ class URRobot:
         
         goal_response = self.call_action(
             self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking = True
+        )
+
+        if not goal_response.accepted:
+            raise Exception(f"Trajectory was not accepted: {goal_response}")
+
+        # Verify execution
+        # TODO: make option for non-blocking
+        if blocking:
+            result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response)
+            return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
+        else:
+            # TODO: return future
+            raise RuntimeError("Non-blocking support for now...")
+
+    def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
+        """Send robot trajectory."""
+        # Construct test trajectory
+        path = Path(
+            poses = poses
+        )
+
+        goal = DynamicForceModePath.Goal(
+            task_frame = PoseStamped(pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0))),
+            wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
+            type=2,
+            speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
+            force_mode_path=path,
+            waypoint_tolerances=[0.001,0.001,0.001,0.001,0.001,0.001]
+        )
+
+        # Sending trajectory goal
+        if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
+            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] = \
+                self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
+        
+        goal_response = self.call_action(
+            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = True
         )
 
         if not goal_response.accepted:
