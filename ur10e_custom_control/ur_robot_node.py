@@ -8,6 +8,7 @@ from control_msgs.action import FollowJointTrajectory
 from ur_msgs.action import DynamicForceModePath
 from geometry_msgs.msg import Pose, PoseStamped, Wrench, Vector3, Quaternion, Twist, Point
 from nav_msgs.msg import Path
+from std_msgs.msg import Header
 
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -106,6 +107,7 @@ class URRobot:
             )
             
     def wait_for_action(self, action_name: str, action_type: type, timeout: int =_DEFAULT_ACTION_TIMEOUT_SEC):
+        self._node.get_logger().info(f"Attempting to start action {action_name} (type: {action_type})")
         client = ActionClient(self._node, action_type, action_name)
         if client.wait_for_server(timeout) is False:
             raise Exception(
@@ -135,6 +137,7 @@ class URRobot:
             raise Exception(f"Exception while calling service: {future.exception()}")
 
     def call_action(self, ac_client: ActionClient, goal, blocking: bool):
+        self._node.get_logger().info(f"Calling action with goal: {goal}")
         future = ac_client.send_goal_async(goal)
         if blocking:
             rclpy.spin_until_future_complete(self._service_node, future)
@@ -210,13 +213,18 @@ class URRobot:
 
     def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
         """Send robot trajectory."""
+        self.set_controllers(controllers = [URControlModes.DYNAMIC_FORCE_MODE])
+
         # Construct test trajectory
         path = Path(
             poses = poses
         )
 
         goal = DynamicForceModePath.Goal(
-            task_frame = PoseStamped(pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0))),
+            task_frame = PoseStamped(
+                pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0)),
+                header=Header(frame_id='base')
+            ),
             wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
             type=2,
             speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
@@ -227,7 +235,7 @@ class URRobot:
         # Sending trajectory goal
         if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
             self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] = \
-                self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
+                self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.DYNAMIC_FORCE_MODE.action_type)
         
         goal_response = self.call_action(
             self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = True
@@ -239,8 +247,8 @@ class URRobot:
         # Verify execution
         # TODO: make option for non-blocking
         if blocking:
-            result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response)
-            return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
+            result: DynamicForceModePath.Result = self.get_result(self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal_response)
+            return result.error_code == DynamicForceModePath.Result.SUCCESSFUL
         else:
             # TODO: return future
             raise RuntimeError("Non-blocking support for now...")
