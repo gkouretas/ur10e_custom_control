@@ -116,7 +116,7 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
 
         def __home_robot(_):
             self._robot.send_trajectory(
-                [UR_HOME_POSE], [Duration(sec = 10)], True
+                [UR_HOME_POSE], [Duration(sec = 10)], False
             )
 
         def __run_forward_position_control(_):

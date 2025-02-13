@@ -95,7 +95,8 @@ class URExerciseControlWindow(URControlQtWindow):
             # 10s trajectory to get to home pose
             self._robot.send_trajectory(
                 waypts = [self._exercise_traj_joint_angles[0]],
-                time_vec = [Duration(sec = 10)]
+                time_vec = [Duration(sec = 10)],
+                blocking = False
             )
 
         def _run_exercise_trajectory(_):
@@ -104,7 +105,7 @@ class URExerciseControlWindow(URControlQtWindow):
                 self._robot.send_trajectory(
                     waypts = self._exercise_traj_joint_angles[1:], 
                     time_vec = self._exercise_traj_time[1:],
-                    blocking = True
+                    blocking = False
                 )
             else:
                 self._node.get_logger().warning("No waypoints configured")

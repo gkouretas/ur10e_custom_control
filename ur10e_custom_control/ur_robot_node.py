@@ -137,13 +137,14 @@ class URRobot:
             raise Exception(f"Exception while calling service: {future.exception()}")
 
     def call_action(self, ac_client: ActionClient, goal, blocking: bool):
-        self._node.get_logger().info(f"Calling action with goal: {goal}")
+        self._node.get_logger().info(f"Calling action client: {ac_client}")
         future = ac_client.send_goal_async(goal)
         if blocking:
             rclpy.spin_until_future_complete(self._service_node, future)
+            self._node.get_logger().info("Result received")
             #while not future.done(): time.sleep(0.01)
         else:
-            future.add_done_callback(self.get_result_callback)
+            future.add_done_callback(self.get_result)
 
         if future.result() is not None:
             return future.result()
@@ -153,18 +154,20 @@ class URRobot:
     def get_result(self, ac_client: ActionClient, goal_response):
         future_res = ac_client._get_result_async(goal_response)
         rclpy.spin_until_future_complete(self._service_node, future_res)
+        self._node.get_logger().info("Result received")
         #while not future_res.done(): time.sleep(0.01)
         if future_res.result() is not None:
             return future_res.result().result
         else:
             raise Exception(f"Exception while calling action: {future_res.exception()}")
 
-    def set_controllers(self, controllers: list[URControlModes]):
+    def set_controllers(self, controllers: list[URControlModes], deactivate: list[URControlModes]):
         return self.call_service(
             URService.ControllerManager.SRV_SWITCH_CONTROLLER,
             SwitchController.Request(
                 activate_controllers = controllers,
-                start_controllers = controllers
+                start_controllers = controllers,
+                deactivate_controllers = deactivate
             )
         )
     
@@ -196,7 +199,7 @@ class URRobot:
                 self.wait_for_action(URControlModes.SCALED_JOINT_TRAJECTORY.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
         
         goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking = True
+            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking = blocking
         )
 
         if not goal_response.accepted:
@@ -209,11 +212,12 @@ class URRobot:
             return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
         else:
             # TODO: return future
-            raise RuntimeError("Non-blocking support for now...")
-
+            # raise RuntimeError("Non-blocking support for now...")
+            return True
+        
     def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
         """Send robot trajectory."""
-        self.set_controllers(controllers = [URControlModes.DYNAMIC_FORCE_MODE])
+        self.set_controllers(controllers = [URControlModes.DYNAMIC_FORCE_MODE], deactivate = [URControlModes.SCALED_JOINT_TRAJECTORY])
 
         # Construct test trajectory
         path = Path(
@@ -221,15 +225,17 @@ class URRobot:
         )
 
         goal = DynamicForceModePath.Goal(
-            task_frame = PoseStamped(
-                pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0)),
-                header=Header(frame_id='base')
-            ),
+            # task_frame = PoseStamped(
+            #     pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0)),
+            #     header=Header(frame_id='base')
+            # ),
+            task_frame = poses[0],
             wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
             type=2,
             speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
             force_mode_path=path,
-            waypoint_tolerances=[0.001,0.001,0.001,0.001,0.001,0.001]
+            waypoint_tolerances=[0.001,0.001,0.001,0.001,0.001,0.001],
+            deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0]
         )
 
         # Sending trajectory goal
