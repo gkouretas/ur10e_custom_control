@@ -12,7 +12,8 @@ from PyQt5.QtWidgets import *
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PoseStamped, Pose
+from geometry_msgs.msg import PoseStamped, PoseArray
+from std_msgs.msg import Header
 from builtin_interfaces.msg import Duration
 
 from std_srvs.srv import Trigger
@@ -46,6 +47,7 @@ class URExerciseControlWindow(URControlQtWindow):
         self._exercise_traj_joint_angles: list[list[float]] = []
         self._exercise_traj_time: list[Duration] = []
         self._exercise_traj_ready: bool = False
+        self._current_pose: PoseStamped = None
 
         self._activate_mindrove_service = self._node.create_client(
             Trigger, 
@@ -56,6 +58,8 @@ class URExerciseControlWindow(URControlQtWindow):
             Trigger, 
             MINDROVE_DEACTIVATION_SERVICE
         )
+
+        self._path_publisher = self._node.create_publisher(PoseArray, "dynamic_force_path", 0)
 
     def __conf_exercise_tab(self, layout: QLayout) -> None:
         _run_loop = False
@@ -114,7 +118,7 @@ class URExerciseControlWindow(URControlQtWindow):
             if self._robot is None: return
             if len(self._exercise_traj_joint_angles) > 1:
                 self._robot.run_dynamic_force_mode(
-                    poses = self._exercise_traj_poses[1:], 
+                    poses = self._exercise_traj_poses[0:], 
                     blocking = True
                 )
             else:
@@ -233,6 +237,13 @@ class URExerciseControlWindow(URControlQtWindow):
                 f"Deactivate mindrove service: {self._deactivate_mindrove_service.call(Trigger.Request())}"
             )
 
+        def _publish_path_for_rviz(_):
+            pose_array = PoseArray()
+            pose_array.header = Header(frame_id="base") # TODO: path path name
+            pose_array.poses = [x.pose for x in self._exercise_traj_poses]
+            # self._node.get_logger().info(pose_array.poses)
+            self._path_publisher.publish(pose_array)
+
             # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
             QPushButton("START FREEDRIVE EXERCISE", self): _start_freedrive_exercise_trajectory,
@@ -245,6 +256,7 @@ class URExerciseControlWindow(URControlQtWindow):
             QPushButton("ACTIVATE MINDROVE", self): _activate_mindrove,
             QPushButton("DEACTIVATE MINDROVE", self): _deactivate_mindrove,
             QPushButton("RUN DYNAMIC FORCE MODE", self): _run_dynamic_force_mode,
+            QPushButton("PUBLISH PATH FOR RVIZ", self): _publish_path_for_rviz,
         }
 
         for button, callback_func in _launch_map.items():
@@ -265,6 +277,7 @@ class URExerciseControlWindow(URControlQtWindow):
             self._node.get_logger().info(f"Adding {msg.pose} at {msg.header.stamp}")
             self._exercise_traj_poses.append(msg)
         
+        self._current_pose = msg.pose
         self._pose_reception_counter += 1
         self._state_lock.release()
 

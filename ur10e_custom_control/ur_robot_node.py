@@ -138,18 +138,22 @@ class URRobot:
 
     def call_action(self, ac_client: ActionClient, goal, blocking: bool):
         self._node.get_logger().info(f"Calling action client: {ac_client}")
-        future = ac_client.send_goal_async(goal)
-        if blocking:
-            rclpy.spin_until_future_complete(self._service_node, future)
+        future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback)
+        if False:
+            # rclpy.spin_until_future_complete(self._service_node, future)
             self._node.get_logger().info("Result received")
             #while not future.done(): time.sleep(0.01)
         else:
             future.add_done_callback(self.get_result)
+            return future
 
-        if future.result() is not None:
-            return future.result()
-        else:
-            raise Exception(f"Exception while calling action: {future.exception()}")
+        # if future.result() is not None:
+        #     return future.result()
+        # else:
+        #     raise Exception(f"Exception while calling action: {future.exception()}")
+
+    def _action_feedback(self, feedback):
+        self._node.get_logger().info(f"Feedback: {feedback}")
 
     def get_result(self, ac_client: ActionClient, goal_response):
         future_res = ac_client._get_result_async(goal_response)
@@ -234,7 +238,7 @@ class URRobot:
             type=2,
             speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
             force_mode_path=path,
-            waypoint_tolerances=[0.001,0.001,0.001,0.001,0.001,0.001],
+            waypoint_tolerances=[0.01,0.01,0.1,0.01,0.01,0.01],
             deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0]
         )
 
