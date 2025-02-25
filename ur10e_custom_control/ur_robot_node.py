@@ -235,11 +235,17 @@ class URRobot:
             # ),
             task_frame = poses[0],
             wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
-            type=2,
+            type=DynamicForceModePath.Goal.TCP_TO_ORIGIN,
             speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
             force_mode_path=path,
-            waypoint_tolerances=[0.01,0.01,0.1,0.01,0.01,0.01],
-            deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0]
+            waypoint_tolerances=[0.025,0.025,0.025,0.025,0.025,0.025],
+            deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0],
+            compliance_tolerances=[DynamicForceModePath.Goal.ALWAYS_INACTIVE,
+                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                   DynamicForceModePath.Goal.ALWAYS_INACTIVE,
+                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE]
         )
 
         # Sending trajectory goal

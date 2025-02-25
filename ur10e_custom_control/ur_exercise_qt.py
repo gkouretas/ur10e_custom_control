@@ -118,7 +118,7 @@ class URExerciseControlWindow(URControlQtWindow):
             if self._robot is None: return
             if len(self._exercise_traj_joint_angles) > 1:
                 self._robot.run_dynamic_force_mode(
-                    poses = self._exercise_traj_poses[0:], 
+                    poses = self._exercise_traj_poses, 
                     blocking = True
                 )
             else:
