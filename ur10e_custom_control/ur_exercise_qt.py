@@ -8,6 +8,7 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 
 from PyQt5.QtWidgets import *
+from PyQt5.QtCore import QTimer
 
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
@@ -26,6 +27,9 @@ from typing import Callable
 from functools import partial
 
 from dataclasses import dataclass, asdict
+
+# TODO: make config or move elsewhere
+_DISTANCE_THRESHOLD = 20/1000
 
 @dataclass
 class Exercise:
@@ -60,18 +64,36 @@ class URExerciseControlWindow(URControlQtWindow):
         )
 
         self._path_publisher = self._node.create_publisher(PoseArray, "dynamic_force_path", 0)
+        self._exercise_freedrive_timer = QTimer(self)
+        self._exercise_freedrive_timer.timeout.connect(self._robot.ping_freedrive)
+
+    def _get_trajectory(self, poses: list[PoseStamped], distance_threshold: float = _DISTANCE_THRESHOLD) -> list[PoseStamped]:
+        def __dist3d(_t1: PoseStamped, _t2: PoseStamped) -> float:
+            return ((_t1.pose.position.x-_t2.pose.position.x)**2 + \
+                    (_t1.pose.position.y-_t2.pose.position.y)**2 + \
+                    (_t1.pose.position.z-_t2.pose.position.z)**2)**0.5
+        
+        last_pose: PoseStamped = poses[0]
+        trajectory: list[PoseStamped] = [] # Do not include initial pose in the trajectory
+        for pose in poses:
+            if __dist3d(last_pose, pose) >= distance_threshold:
+                last_pose = pose
+                trajectory.append(pose)
+
+        return trajectory
 
     def __conf_exercise_tab(self, layout: QLayout) -> None:
         _run_loop = False
         def _start_freedrive_exercise_trajectory(_):
-            # TODO: set freedrive mode
-            # TODO: verify we are in freedrive mode???
-
             assert self.create_subscriber(msg_type = JointState, topic = "/joint_states", callback = self._update_joint_angles, qos_profile = UR_QOS_PROFILE), \
                 "Unable to create joint position subscriber"
             assert self.create_subscriber(msg_type = PoseStamped, topic = "tcp_pose_broadcaster/pose", callback = self._update_pose, qos_profile = UR_QOS_PROFILE), \
                 "Unable to create TCP pose broadcaster subscriber"
             
+            # TODO: add ability to restrict DOF's
+            self._robot.run_freedrive_control()
+            self._exercise_freedrive_timer.start(100)
+
             self._state_lock.acquire()
             self._exercise_traj_poses.clear()
             self._exercise_traj_time.clear()
@@ -90,6 +112,9 @@ class URExerciseControlWindow(URControlQtWindow):
             self._joint_angle_reception_counter = -1
             self._exercise_traj_ready = True
             self._state_lock.release()
+
+            self._robot.stop_freedrive_control()
+            self._exercise_freedrive_timer.stop()
 
             self._node.get_logger().debug("Trajectory")
             for w, d in zip(self._exercise_traj_poses, self._exercise_traj_time):
@@ -116,9 +141,12 @@ class URExerciseControlWindow(URControlQtWindow):
 
         def _run_dynamic_force_mode(_):
             if self._robot is None: return
+
             if len(self._exercise_traj_joint_angles) > 1:
                 self._robot.run_dynamic_force_mode(
-                    poses = self._exercise_traj_poses, 
+                    poses = self._get_trajectory(
+                        self._exercise_traj_poses,
+                    ), 
                     blocking = True
                 )
             else:
@@ -240,7 +268,7 @@ class URExerciseControlWindow(URControlQtWindow):
         def _publish_path_for_rviz(_):
             pose_array = PoseArray()
             pose_array.header = Header(frame_id="base") # TODO: path path name
-            pose_array.poses = [x.pose for x in self._exercise_traj_poses]
+            pose_array.poses = [x.pose for x in self._get_trajectory(self._exercise_traj_poses)]
             # self._node.get_logger().info(pose_array.poses)
             self._path_publisher.publish(pose_array)
 
@@ -274,7 +302,7 @@ class URExerciseControlWindow(URControlQtWindow):
         # Add 50 waypoints/sec
         # TODO: make waypoint decimation configurable
         if self._pose_reception_counter % 10 == 0:
-            self._node.get_logger().info(f"Adding {msg.pose} at {msg.header.stamp}")
+            self._node.get_logger().debug(f"Adding {msg.pose} at {msg.header.stamp}")
             self._exercise_traj_poses.append(msg)
         
         self._current_pose = msg.pose
@@ -292,7 +320,7 @@ class URExerciseControlWindow(URControlQtWindow):
         # Add 50 waypoints/sec
         # TODO: make waypoint decimation configurable
         if self._joint_angle_reception_counter % 10 == 0:
-            self._node.get_logger().info(f"Adding {msg.position} at {msg.header.stamp}")
+            self._node.get_logger().debug(f"Adding {msg.position} at {msg.header.stamp}")
             self._exercise_traj_joint_angles.append(msg.position)
             if len(self._exercise_traj_time) > 0:
                 _time_f64 = (msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9) - \
