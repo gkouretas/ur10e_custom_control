@@ -17,7 +17,7 @@ from rclpy.publisher import Publisher
 from rclpy.executors import SingleThreadedExecutor
 
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from controller_manager_msgs.srv import SwitchController
+from controller_manager_msgs.srv import SwitchController, ListControllers
 from std_srvs.srv import Trigger
 
 from ur10e_typedefs import URService
@@ -84,6 +84,17 @@ class URRobot:
         self._feature: Optional[int] = None
 
         self._active_control_mode: URControlModes = None
+
+    def _get_all_active_controllers(self, exclude: str | None = None):
+        response = self.list_controllers()
+        active_controllers = []
+        for controller in response.controller:
+            if controller.name in URControlModes.controller_names() \
+                and controller.state == "active" and \
+                    ((controller.name != exclude) if exclude is not None else True):
+                active_controllers.append(controller.name)
+
+        return active_controllers
 
     def _start_cyclic_control(self):
         self._node.get_logger().info("Reset timer")
@@ -165,13 +176,18 @@ class URRobot:
         else:
             raise Exception(f"Exception while calling action: {future_res.exception()}")
 
-    def set_controllers(self, controllers: list[URControlModes], deactivate: list[URControlModes]):
+    def list_controllers(self) -> ListControllers.Response:
+        return self.call_service(
+            URService.ControllerManager.SRV_LIST_CONTROLLERS,
+            ListControllers.Request()
+        )
+
+    def set_controllers(self, start: list[URControlModes], stop: list[URControlModes]):
         return self.call_service(
             URService.ControllerManager.SRV_SWITCH_CONTROLLER,
             SwitchController.Request(
-                activate_controllers = controllers,
-                start_controllers = controllers,
-                deactivate_controllers = deactivate
+                start_controllers = start,
+                stop_controllers = stop
             )
         )
     
@@ -186,7 +202,10 @@ class URRobot:
         if len(waypts) != len(time_vec):
             raise Exception("waypoints vector and time vec should be same length")
         
-        # TODO: verify joint trajectory controller has been activated
+        self.set_controllers(
+            start=[URControlModes.SCALED_JOINT_TRAJECTORY],
+            stop=self._get_all_active_controllers(exclude=URControlModes.SCALED_JOINT_TRAJECTORY)
+        )
 
         # Construct test trajectory
         joint_trajectory = JointTrajectory()
@@ -221,7 +240,10 @@ class URRobot:
         
     def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
         """Send robot trajectory."""
-        self.set_controllers(controllers = [URControlModes.DYNAMIC_FORCE_MODE], deactivate = [URControlModes.SCALED_JOINT_TRAJECTORY])
+        self.set_controllers(
+            start=[URControlModes.DYNAMIC_FORCE_MODE], 
+            stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
+        )
 
         # Construct test trajectory
         path = Path(
@@ -291,7 +313,10 @@ class URRobot:
         self._control_msg[URControlModes.FORWARD_VELOCITY].data = [0.0] * len(UR_JOINT_LIST)
         
     def run_freedrive_control(self):
-        # self.set_controllers(controllers = [URControlModes.FREEDRIVE_MODE])
+        self.set_controllers(
+            start = [URControlModes.FREEDRIVE_MODE],
+            stop = self._get_all_active_controllers(exclude=URControlModes.FREEDRIVE_MODE)
+        )
 
         if self._cyclic_publishers[URControlModes.FREEDRIVE_MODE] is None:
             self._cyclic_publishers[URControlModes.FREEDRIVE_MODE] = \
