@@ -432,6 +432,7 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 self._robot.set_feature(None)
 
         _dialog = QDialog()
+        _dialog.setWindowTitle("Freedrive UR Control")
         _layout = QGridLayout()
 
         states = self._robot.get_freedrive_dofs()
