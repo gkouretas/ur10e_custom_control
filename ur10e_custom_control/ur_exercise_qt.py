@@ -5,10 +5,10 @@ import os
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import MultiThreadedExecutor
 
 from PyQt5.QtWidgets import *
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, QThread
 
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
@@ -22,6 +22,8 @@ from exercise_decoder_node.exercise_decoder_node_configs import (
     MINDROVE_ACTIVATION_SERVICE,
     MINDROVE_DEACTIVATION_SERVICE
 )
+
+from nav_msgs.msg import Path
 
 from typing import Callable
 from functools import partial
@@ -37,6 +39,27 @@ class Exercise:
     poses: list[PoseStamped]
     joint_angles: list[list[float]]
     duration: list[Duration]
+
+class RclpySpinner(QThread):
+
+    def __init__(self, nodes: list[Node]):
+        super().__init__()
+        self._primary_node = nodes[0]
+        self._nodes = nodes
+        self._abort = False
+
+    def run(self):
+        self._primary_node.get_logger().info('Start called on RclpySpinner, spinning ros2 node')
+        executor = MultiThreadedExecutor()
+        for node in self._nodes:
+            executor.add_node(node)
+        while rclpy.ok() and not self._abort:
+            executor.spin_once(timeout_sec=1.0)
+
+    def quit(self):  # noqa: A003
+        self._primary_node.get_logger().info('Quit called on RclpySpinner')
+        self._abort = True
+        super().quit()
 
 class URExerciseControlWindow(URControlQtWindow):
     def __init__(self, node: Node):
@@ -63,7 +86,9 @@ class URExerciseControlWindow(URControlQtWindow):
             MINDROVE_DEACTIVATION_SERVICE
         )
 
-        self._path_publisher = self._node.create_publisher(PoseArray, "dynamic_force_path", 0)
+        self._poses_publisher = self._node.create_publisher(PoseArray, "dynamic_force_poses", 0)
+        self._path_publisher = self._node.create_publisher(Path, "dynamic_force_path", 0)
+
         self._exercise_freedrive_timer = QTimer(self)
         self._exercise_freedrive_timer.timeout.connect(self._robot.ping_freedrive)
 
@@ -269,8 +294,13 @@ class URExerciseControlWindow(URControlQtWindow):
             pose_array = PoseArray()
             pose_array.header = Header(frame_id="base") # TODO: path path name
             pose_array.poses = [x.pose for x in self._get_trajectory(self._exercise_traj_poses)]
+
+            path = Path()
+            path.header = Header(frame_id="base")
+            path.poses = [x for x in self._get_trajectory(self._exercise_traj_poses)]
             # self._node.get_logger().info(pose_array.poses)
-            self._path_publisher.publish(pose_array)
+            self._poses_publisher.publish(pose_array)
+            self._path_publisher.publish(path)
 
             # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
@@ -348,17 +378,15 @@ def main():
     main_window = URExerciseControlWindow(node)
     main_window.show()
 
-    executor = SingleThreadedExecutor()
+    executor = MultiThreadedExecutor()
     executor.add_node(node)
     executor.add_node(main_window._robot._node)
     executor.add_node(main_window._robot._service_node)
 
-    def _spin():
-        while executor._context.ok() and not executor._is_shutdown:
-            node.get_logger().debug("Executor spin alive")
-            executor.spin_once() 
-
-    threading.Thread(target = _spin, daemon = False).start()
+    rclpy_spinner = RclpySpinner([node, main_window._robot._node, main_window._robot._service_node])
+    rclpy_spinner.start()
     
     # Run the application's event loop
-    sys.exit(app.exec_())
+    app.exec_()
+    rclpy_spinner.quit()
+    sys.exit()

@@ -141,40 +141,36 @@ class URRobot:
 
         future: Future = service.call_async(request)
         rclpy.spin_until_future_complete(self._service_node, future)
-        #while not future.done(): time.sleep(0.01)
+
         if future.result() is not None:
             return future.result()
         else:
             raise Exception(f"Exception while calling service: {future.exception()}")
 
-    def call_action(self, ac_client: ActionClient, goal, blocking: bool):
+    def call_action(self, ac_client: ActionClient, goal):
         self._node.get_logger().info(f"Calling action client: {ac_client}")
         future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback)
-        if False:
-            # rclpy.spin_until_future_complete(self._service_node, future)
-            self._node.get_logger().info("Result received")
-            #while not future.done(): time.sleep(0.01)
-        else:
-            future.add_done_callback(self.get_result)
-            return future
+        rclpy.spin_until_future_complete(self._service_node, future)
+        self._node.get_logger().info(f"Done spinning")
 
-        # if future.result() is not None:
-        #     return future.result()
-        # else:
-        #     raise Exception(f"Exception while calling action: {future.exception()}")
+        if future.result() is not None:
+            return future.result()
+        else:
+            raise Exception(f"Exception while calling action: {future.exception()}")
 
     def _action_feedback(self, feedback):
         self._node.get_logger().info(f"Feedback: {feedback}")
 
-    def get_result(self, ac_client: ActionClient, goal_response):
-        future_res = ac_client._get_result_async(goal_response)
-        rclpy.spin_until_future_complete(self._service_node, future_res)
-        self._node.get_logger().info("Result received")
-        #while not future_res.done(): time.sleep(0.01)
-        if future_res.result() is not None:
-            return future_res.result().result
+    def get_result(self, ac_client: ActionClient, goal_response, blocking: bool = True):
+        self._node.get_logger().info(f"Getting result from action client: {ac_client}")
+        future = ac_client._get_result_async(goal_response)
+        
+        if blocking:
+            rclpy.spin_until_future_complete(self._service_node, future)
         else:
-            raise Exception(f"Exception while calling action: {future_res.exception()}")
+            future.add_done_callback(self.get_result)
+
+        return future
 
     def list_controllers(self) -> ListControllers.Response:
         return self.call_service(
@@ -222,7 +218,7 @@ class URRobot:
                 self.wait_for_action(URControlModes.SCALED_JOINT_TRAJECTORY.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
         
         goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking = blocking
+            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory)
         )
 
         if not goal_response.accepted:
@@ -230,8 +226,8 @@ class URRobot:
 
         # Verify execution
         # TODO: make option for non-blocking
+        result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response, blocking)
         if blocking:
-            result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response)
             return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
         else:
             # TODO: return future
@@ -276,20 +272,22 @@ class URRobot:
                 self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.DYNAMIC_FORCE_MODE.action_type)
         
         goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = True
+            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = False
         )
 
         if not goal_response.accepted:
             raise Exception(f"Trajectory was not accepted: {goal_response}")
 
+        result: DynamicForceModePath.Result = self.get_result(self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal_response)
+
         # Verify execution
         # TODO: make option for non-blocking
         if blocking:
-            result: DynamicForceModePath.Result = self.get_result(self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal_response)
             return result.error_code == DynamicForceModePath.Result.SUCCESSFUL
         else:
             # TODO: return future
-            raise RuntimeError("Non-blocking support for now...")
+            return True
+            # raise RuntimeError("Non-blocking support for now...")
 
     def run_position_control(self):
         if self._cyclic_publishers[URControlModes.FORWARD_POSITION] is None:

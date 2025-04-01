@@ -119,6 +119,8 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 [UR_HOME_POSE], [Duration(sec = 10)], False
             )
 
+            self._node.get_logger().info("here")
+
         def __run_forward_position_control(_):
             def __on_position_control_completion():
                 nonlocal _flag
