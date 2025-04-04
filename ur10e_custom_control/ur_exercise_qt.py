@@ -41,7 +41,6 @@ class Exercise:
     duration: list[Duration]
 
 class RclpySpinner(QThread):
-
     def __init__(self, nodes: list[Node]):
         super().__init__()
         self._primary_node = nodes[0]
@@ -50,7 +49,9 @@ class RclpySpinner(QThread):
 
     def run(self):
         self._primary_node.get_logger().info('Start called on RclpySpinner, spinning ros2 node')
-        executor = MultiThreadedExecutor()
+        from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
+
+        executor = SingleThreadedExecutor()
         for node in self._nodes:
             executor.add_node(node)
         while rclpy.ok() and not self._abort:
@@ -172,7 +173,7 @@ class URExerciseControlWindow(URControlQtWindow):
                     poses = self._get_trajectory(
                         self._exercise_traj_poses,
                     ), 
-                    blocking = True
+                    blocking = False
                 )
             else:
                 self._node.get_logger().warning("No waypoints configured")
@@ -298,7 +299,7 @@ class URExerciseControlWindow(URControlQtWindow):
             path = Path()
             path.header = Header(frame_id="base")
             path.poses = [x for x in self._get_trajectory(self._exercise_traj_poses)]
-            # self._node.get_logger().info(pose_array.poses)
+
             self._poses_publisher.publish(pose_array)
             self._path_publisher.publish(path)
 

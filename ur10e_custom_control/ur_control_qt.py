@@ -6,6 +6,9 @@ import time
 
 import rclpy
 from rclpy.subscription import Subscription
+from rclpy.node import Node
+from rclpy.action import ActionClient
+from rclpy.client import Future
 
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import Qt, QTimer
@@ -18,8 +21,6 @@ from ur10e_configs import (
 )
 
 from ur_msgs.srv import SetFreedriveParams
-
-from rclpy.node import Node
 
 from functools import partial
 from std_msgs.msg import Header
@@ -34,8 +35,8 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
 
         self._node = node
 
-        # self._robot: Optional[URRobotSM] = None
         self._robot = URRobotSM(node_name = "ur_custom_robot")
+
         # Set the main window properties
         self.setWindowTitle("UR Control Node")
         self.setGeometry(0, 0, 400, 400)
@@ -44,6 +45,7 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
         self.setCentralWidget(self.tab_widget)
 
         self._launch_buttons = []
+        self._control_buttons: list[QPushButton] = []
 
         self.robot_tab = self._create_tab(name = "Robot Tab", layout = QVBoxLayout(), tab_create_func = self._conf_robot_tab)
         self.service_tab = self._create_tab(name = "Service Tab", layout = QVBoxLayout(), tab_create_func = self.__conf_service_tab)
@@ -89,13 +91,18 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
         self.tab_widget.addTab(_tab_widget, name)
 
         return _tab_widget
-    
+
+    def handle_trajectory_future(self, ac_client: ActionClient, result_callback: Callable | None, future: Future):
+        if future.result().accepted:
+            self._node.get_logger().info("Trajectory accepted")
+            result_future = ac_client._get_result_async(future.result())
+            if result_callback is not None:
+                result_future.add_done_callback(result_callback)
+        else:
+            self._node.get_logger().error(f"Trajectory failure: {future.result()}")
+
     def _conf_robot_tab(self, layout: QLayout) -> None:
         def __init_robot(button: QPushButton):
-            # TODO: remove need to do this
-            # self._robot = URRobotSM(self._node)
-            # self._robot = URRobotSM(node_name = "ur_custom_robot")
-
             button.setEnabled(False) # disable button so we can't re-initialize the class
             for button in self._launch_buttons:
                 # Now that robot node is active, we can enable services
@@ -115,11 +122,18 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
                 self._robot.send_trajectory(**trajectory_kwargs)
 
         def __home_robot(_):
+            def homing_completion_callback(*_):
+                for button in self._control_buttons:
+                    button.setEnabled(True)
+
+            for button in self._control_buttons:
+                button.setEnabled(False)
+            self._robot.set_action_completion_callback(self.handle_trajectory_future)
+            self._robot.set_action_result_callback(homing_completion_callback)
+
             self._robot.send_trajectory(
                 [UR_HOME_POSE], [Duration(sec = 10)], False
             )
-
-            self._node.get_logger().info("here")
 
         def __run_forward_position_control(_):
             def __on_position_control_completion():
@@ -228,6 +242,10 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
         }
 
         for button, callback_func in _launch_map.items():
+            if button.text() != "INIT ROBOT":
+                # Disable buttons 
+                self._control_buttons.append(button)
+
             button.clicked.connect(partial(callback_func, button))
             layout.addWidget(button)
 

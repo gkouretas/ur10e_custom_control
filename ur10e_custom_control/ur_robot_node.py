@@ -3,6 +3,8 @@ import time
 import threading
 import copy
 
+from functools import partial
+
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from ur_msgs.action import DynamicForceModePath
@@ -83,6 +85,10 @@ class URRobot:
         self._freedrive_dofs: list[bool] = [True, True, True, True, True, True]
         self._feature: Optional[int] = None
 
+        self._action_feedback_callback = None
+        self._action_completion_callback = None
+        self._action_result_callback = None
+
         self._active_control_mode: URControlModes = None
 
     def _get_all_active_controllers(self, exclude: str | None = None):
@@ -117,6 +123,15 @@ class URRobot:
                 timeout = _DEFAULT_SERVICE_TIMEOUT_SEC
             )
             
+    def set_action_feedback_callback(self, callback):
+        self._action_feedback_callback = callback
+
+    def set_action_completion_callback(self, callback):
+        self._action_completion_callback = callback
+
+    def set_action_result_callback(self, callback):
+        self._action_result_callback = callback
+    
     def wait_for_action(self, action_name: str, action_type: type, timeout: int =_DEFAULT_ACTION_TIMEOUT_SEC):
         self._node.get_logger().info(f"Attempting to start action {action_name} (type: {action_type})")
         client = ActionClient(self._node, action_type, action_name)
@@ -147,30 +162,22 @@ class URRobot:
         else:
             raise Exception(f"Exception while calling service: {future.exception()}")
 
-    def call_action(self, ac_client: ActionClient, goal):
+    def call_action(self, ac_client: ActionClient, goal, blocking: bool):
         self._node.get_logger().info(f"Calling action client: {ac_client}")
-        future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback)
-        rclpy.spin_until_future_complete(self._service_node, future)
-        self._node.get_logger().info(f"Done spinning")
-
-        if future.result() is not None:
-            return future.result()
-        else:
-            raise Exception(f"Exception while calling action: {future.exception()}")
-
-    def _action_feedback(self, feedback):
-        self._node.get_logger().info(f"Feedback: {feedback}")
-
-    def get_result(self, ac_client: ActionClient, goal_response, blocking: bool = True):
-        self._node.get_logger().info(f"Getting result from action client: {ac_client}")
-        future = ac_client._get_result_async(goal_response)
         
         if blocking:
-            rclpy.spin_until_future_complete(self._service_node, future)
+            return ac_client.send_goal(goal, feedback_callback=self._action_feedback_callback)
         else:
-            future.add_done_callback(self.get_result)
+            future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback_callback)
+            future.add_done_callback(partial(self._action_completion_callback, ac_client, self._action_result_callback))
+            return future
 
-        return future
+    def get_result(self, ac_client: ActionClient, goal_response):
+        self._node.get_logger().info(f"Getting result from action client: {ac_client}")
+        future = ac_client._get_result_async(goal_response)
+        rclpy.spin_until_future_complete(self._service_node, future)
+
+        return future.result()
 
     def list_controllers(self) -> ListControllers.Response:
         return self.call_service(
@@ -194,6 +201,7 @@ class URRobot:
         )
 
     def send_trajectory(self, waypts: list[list[float]], time_vec: list[Duration], blocking: bool = True):
+        
         """Send robot trajectory."""
         if len(waypts) != len(time_vec):
             raise Exception("waypoints vector and time vec should be same length")
@@ -217,22 +225,25 @@ class URRobot:
             self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY] = \
                 self.wait_for_action(URControlModes.SCALED_JOINT_TRAJECTORY.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
         
-        goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory)
+        return self.call_action(
+            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking=blocking
         )
 
-        if not goal_response.accepted:
-            raise Exception(f"Trajectory was not accepted: {goal_response}")
+        # if blocking:
+        #     if not goal_response.accepted:
+        #         raise Exception(f"Trajectory was not accepted: {goal_response}")
 
-        # Verify execution
-        # TODO: make option for non-blocking
-        result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response, blocking)
-        if blocking:
-            return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-        else:
-            # TODO: return future
-            # raise RuntimeError("Non-blocking support for now...")
-            return True
+        #     # Verify execution
+        #     result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response, blocking)
+            
+        #     if blocking:
+        #         return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
+        #     else:
+        #         # TODO: return future
+        #         # raise RuntimeError("Non-blocking support for now...")
+        #         return True
+        # else:
+        #     return goal_response
         
     def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
         """Send robot trajectory."""
