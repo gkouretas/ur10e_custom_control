@@ -177,17 +177,10 @@ class URExerciseControlWindow(URControlQtWindow):
                 
                 y = np.array([0.0, 1.0, 0.0])
 
-                t1x = -t1.position.x
-                t1y = -t1.position.y
-                t1z = t1.position.z
-                t2x = -t2.position.x
-                t2y = -t2.position.y
-                t2z = t2.position.z
-
                 x = np.array([
-                    t1x-t2x,
-                    t1y-t2y,
-                    t1z-t2z
+                    t1.position.x-t2.position.x,
+                    t1.position.y-t2.position.y,
+                    t1.position.z-t2.position.z
                 ])
 
                 x /= np.linalg.norm(x)
@@ -217,8 +210,7 @@ class URExerciseControlWindow(URControlQtWindow):
                             y=feedback.feedback.pose_actual.position.y,
                             z=feedback.feedback.pose_actual.position.z
                         ),
-                        # rotation = Quaternion(w=q_new[3], x=q_new[0], y=q_new[1], z=q_new[2])
-                        rotation = Quaternion(x=0.2535515689561101, y=-0.5568953965234998, z=0.7693465916809247, w=-0.1835345773410923)
+                        rotation = Quaternion(w=q_new[0], x=q_new[1], y=q_new[2], z=q_new[3])
                     )
                 )
                 
