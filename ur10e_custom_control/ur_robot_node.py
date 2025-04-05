@@ -169,7 +169,8 @@ class URRobot:
             return ac_client.send_goal(goal, feedback_callback=self._action_feedback_callback)
         else:
             future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback_callback)
-            future.add_done_callback(partial(self._action_completion_callback, ac_client, self._action_result_callback))
+            if self._action_completion_callback is not None:
+                future.add_done_callback(partial(self._action_completion_callback, ac_client, self._action_result_callback))
             return future
 
     def get_result(self, ac_client: ActionClient, goal_response):
@@ -282,24 +283,10 @@ class URRobot:
             self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] = \
                 self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.DYNAMIC_FORCE_MODE.action_type)
         
-        goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = False
+        return self.call_action(
+            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking=blocking
         )
-
-        if not goal_response.accepted:
-            raise Exception(f"Trajectory was not accepted: {goal_response}")
-
-        result: DynamicForceModePath.Result = self.get_result(self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal_response)
-
-        # Verify execution
-        # TODO: make option for non-blocking
-        if blocking:
-            return result.error_code == DynamicForceModePath.Result.SUCCESSFUL
-        else:
-            # TODO: return future
-            return True
-            # raise RuntimeError("Non-blocking support for now...")
-
+    
     def run_position_control(self):
         if self._cyclic_publishers[URControlModes.FORWARD_POSITION] is None:
             self._cyclic_publishers[URControlModes.FORWARD_POSITION] = \

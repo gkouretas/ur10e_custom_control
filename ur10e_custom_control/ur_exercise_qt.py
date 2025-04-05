@@ -2,6 +2,8 @@ import sys
 import threading
 import pickle
 import os
+import numpy as np
+import transforms3d
 
 import rclpy
 from rclpy.node import Node
@@ -13,16 +15,17 @@ from PyQt5.QtCore import QTimer, QThread
 from ur_control_qt import URControlQtWindow
 from ur10e_configs import UR_QOS_PROFILE
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PoseStamped, PoseArray
+from geometry_msgs.msg import PoseStamped, Quaternion
 from std_msgs.msg import Header
 from builtin_interfaces.msg import Duration
-
+from tf2_ros import TransformBroadcaster
 from std_srvs.srv import Trigger
 from exercise_decoder_node.exercise_decoder_node_configs import (
     MINDROVE_ACTIVATION_SERVICE,
     MINDROVE_DEACTIVATION_SERVICE
 )
 
+from geometry_msgs.msg import Transform, TransformStamped, Vector3
 from nav_msgs.msg import Path
 
 from typing import Callable
@@ -49,9 +52,9 @@ class RclpySpinner(QThread):
 
     def run(self):
         self._primary_node.get_logger().info('Start called on RclpySpinner, spinning ros2 node')
-        from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
+        from rclpy.executors import MultiThreadedExecutor
 
-        executor = SingleThreadedExecutor()
+        executor = MultiThreadedExecutor()
         for node in self._nodes:
             executor.add_node(node)
         while rclpy.ok() and not self._abort:
@@ -87,8 +90,9 @@ class URExerciseControlWindow(URControlQtWindow):
             MINDROVE_DEACTIVATION_SERVICE
         )
 
-        self._poses_publisher = self._node.create_publisher(PoseArray, "dynamic_force_poses", 0)
+        self._target_pose_publisher = self._node.create_publisher(PoseStamped, "dynamic_force_target_pose", 0)
         self._path_publisher = self._node.create_publisher(Path, "dynamic_force_path", 0)
+        self._rviz_camera_tform_publisher = TransformBroadcaster(self._node, 0)
 
         self._exercise_freedrive_timer = QTimer(self)
         self._exercise_freedrive_timer.timeout.connect(self._robot.ping_freedrive)
@@ -166,9 +170,73 @@ class URExerciseControlWindow(URControlQtWindow):
                 self._node.get_logger().warning("No waypoints configured")
 
         def _run_dynamic_force_mode(_):
+            from ur_msgs.action._dynamic_force_mode_path import DynamicForceModePath_FeedbackMessage
+            def dynamic_force_mode_feedback(feedback: DynamicForceModePath_FeedbackMessage):                
+                t1 = feedback.feedback.pose_actual
+                t2 = feedback.feedback.pose_desired
+                
+                y = np.array([0.0, 1.0, 0.0])
+
+                t1x = -t1.position.x
+                t1y = -t1.position.y
+                t1z = t1.position.z
+                t2x = -t2.position.x
+                t2y = -t2.position.y
+                t2z = t2.position.z
+
+                x = np.array([
+                    t1x-t2x,
+                    t1y-t2y,
+                    t1z-t2z
+                ])
+
+                x /= np.linalg.norm(x)
+                y -= (np.dot(x, y)*x)
+                y /= np.linalg.norm(y)
+
+                z = np.cross(x, y)
+
+                R = np.array([
+                    [ 0, -1,  0],  # X_mpl → Y_ros
+                    [ 1,  0,  0],  # Y_mpl → -X_ros
+                    [ 0,  0,  1]   # Z_mpl → Z_ros
+                ])
+
+                q_new = transforms3d.quaternions.mat2quat(
+                    np.array([x, y, z]).T
+                )
+
+                # Set the camera frame to be at the eef position with the orientation
+                # aligned with the target frame
+                eef_with_orientation = TransformStamped(
+                    header=Header(frame_id="base"),
+                    child_frame_id="tf_dynamic_path",
+                    transform=Transform(
+                        translation = Vector3(
+                            x=feedback.feedback.pose_actual.position.x,
+                            y=feedback.feedback.pose_actual.position.y,
+                            z=feedback.feedback.pose_actual.position.z
+                        ),
+                        # rotation = Quaternion(w=q_new[3], x=q_new[0], y=q_new[1], z=q_new[2])
+                        rotation = Quaternion(x=0.2535515689561101, y=-0.5568953965234998, z=0.7693465916809247, w=-0.1835345773410923)
+                    )
+                )
+                
+                # TODO(george): this should probably just already be a PoseStamped object
+                target_pose = PoseStamped(
+                    header=Header(frame_id="base"),
+                    pose=feedback.feedback.pose_desired,
+                )
+
+                self._rviz_camera_tform_publisher.sendTransform(eef_with_orientation)
+                self._target_pose_publisher.publish(target_pose)
+                
             if self._robot is None: return
 
             if len(self._exercise_traj_joint_angles) > 1:
+
+                self._robot.set_action_feedback_callback(dynamic_force_mode_feedback)
+
                 self._robot.run_dynamic_force_mode(
                     poses = self._get_trajectory(
                         self._exercise_traj_poses,
@@ -292,15 +360,10 @@ class URExerciseControlWindow(URControlQtWindow):
             )
 
         def _publish_path_for_rviz(_):
-            pose_array = PoseArray()
-            pose_array.header = Header(frame_id="base") # TODO: path path name
-            pose_array.poses = [x.pose for x in self._get_trajectory(self._exercise_traj_poses)]
-
             path = Path()
             path.header = Header(frame_id="base")
             path.poses = [x for x in self._get_trajectory(self._exercise_traj_poses)]
 
-            self._poses_publisher.publish(pose_array)
             self._path_publisher.publish(path)
 
             # Launch tab
