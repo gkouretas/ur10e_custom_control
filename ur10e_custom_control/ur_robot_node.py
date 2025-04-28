@@ -34,6 +34,7 @@ from ur10e_typedefs import (
 )
 
 from ur_msgs.srv import SetFreedriveParams
+from ur_dashboard_msgs.action import SetMode
 
 from typing import Optional, Iterable, Literal
 
@@ -57,6 +58,15 @@ class URRobot:
 
         self.jtc_action_clients: dict[URControlModes, ActionClient] = \
             {mode: None for mode in URControlModes if mode.has_action_client}
+        
+        try:
+            self._mode_helper: ActionClient = self.wait_for_action(
+                "~/set_mode",
+                SetMode
+            )
+        except Exception:
+            self._mode_helper = None
+            self._node.get_logger().warning("Failed to initialize set_mode action, assuming it is local and will try to initialize later...")
         
         self._cyclic_publishers: dict[URControlModes, Publisher] = \
             {mode: self._create_controller_publisher(mode) for mode in URControlModes if mode.is_cyclic}
@@ -143,7 +153,7 @@ class URRobot:
         self._node.get_logger().info(f"Successfully connected to action '{action_name}'")
         return client
     
-    def call_service(self, srv: URService.URServiceType, request: SrvTypeRequest):
+    def call_service(self, srv: URService.URServiceType, request: SrvTypeRequest | None = None):
         service = self.service_clients.get(srv)
         
         if service is None:
@@ -172,6 +182,24 @@ class URRobot:
             if self._action_completion_callback is not None:
                 future.add_done_callback(partial(self._action_completion_callback, ac_client, self._action_result_callback))
             return future
+        
+    def request_mode(self, goal: SetMode.Goal, blocking: bool):
+        self._node.get_logger().info(f"Requesting mode with goal {goal}")
+        if ac_client := self._mode_helper:
+            pass
+        else:
+            try:
+                self._mode_helper: ActionClient = self.wait_for_action(
+                    "~/set_mode",
+                    SetMode
+                )
+
+                ac_client = self._mode_helper
+            except Exception:
+                self._node.get_logger().error("Failed to request mode")
+                return
+
+        return self.call_action(ac_client=ac_client, goal=goal, blocking=blocking)
 
     def get_result(self, ac_client: ActionClient, goal_response):
         self._node.get_logger().info(f"Getting result from action client: {ac_client}")

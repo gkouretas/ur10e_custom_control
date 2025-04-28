@@ -27,6 +27,8 @@ from exercise_decoder_node.exercise_decoder_node_configs import (
     MINDROVE_ACTIVATION_SERVICE,
     MINDROVE_DEACTIVATION_SERVICE
 )
+from ur_dashboard_msgs.msg import RobotMode
+from ur_dashboard_msgs.action import SetMode
 
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl
@@ -36,6 +38,7 @@ from geometry_msgs.msg import Transform, TransformStamped, Vector3, Point
 from nav_msgs.msg import Path
 from visualization_msgs.msg import Marker
 from std_msgs.msg import ColorRGBA
+from ur10e_typedefs import URService
 
 from typing import Callable
 from functools import partial
@@ -149,7 +152,6 @@ class URExerciseControlWindow(URControlQtWindow):
         self._state_lock = threading.RLock()
         self._clock = Clock()
 
-
         self._pose_reception_counter = 0
         self._joint_angle_reception_counter = 0
         self._exercise_traj_poses: list[PoseStamped] = []
@@ -243,6 +245,20 @@ class URExerciseControlWindow(URControlQtWindow):
     
     def __conf_exercise_tab(self, layout: QLayout) -> None:
         _run_loop = False
+
+        def _start_robot_program(_):
+            if self._robot is None: return
+
+            self._robot.request_mode(
+                SetMode.Goal(
+                    target_robot_mode=RobotMode.RUNNING,
+                    play_program=True,
+                    stop_program=False
+                ),
+                blocking=True
+            )
+                    
+
         def _start_freedrive_exercise_trajectory(_):
             # TODO: add ability to restrict DOF's
             self._robot.run_freedrive_control()
@@ -538,6 +554,7 @@ class URExerciseControlWindow(URControlQtWindow):
 
             # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
+            QPushButton("INITIALIZE ROBOT", self): _start_robot_program,
             QPushButton("START FREEDRIVE EXERCISE", self): _start_freedrive_exercise_trajectory,
             QPushButton("STOP FREEDRIVE EXERCISE", self): _stop_freedrive_exercise_trajectory,
             QPushButton("SAVE TRAJECTORY", self): _save_exercise_trajectory,
@@ -546,6 +563,7 @@ class URExerciseControlWindow(URControlQtWindow):
             QPushButton("RUN DYNAMIC FORCE MODE", self): _run_dynamic_force_mode,
             QPushButton("PUBLISH PATH FOR RVIZ", self): _publish_path_for_rviz,
             QPushButton("TOGGLE FOLLOW EEF", self): _toggle_follow_end_effector
+
             # QPushButton("RUN EXERCISE TRAJECTORY", self): _run_exercise_trajectory,
             # QPushButton("LOOP EXERCISE TRAJECTORY", self): _loop_exercise_trajectory,
             # QPushButton("ACTIVATE MINDROVE", self): _activate_mindrove,
