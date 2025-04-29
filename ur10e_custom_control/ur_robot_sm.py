@@ -131,9 +131,10 @@ class URRobotSM(URRobot):
                             self._result.success = False
                             self._node.get_logger().error(f"Transition to target mode {_mode} failed")
                             self._current_goal_handle.abort()
+                            self._node.get_logger().info("here 1...")
                             return
-                    else:
-                        self._update_robot_state()
+                    
+                        # self._update_robot_state()
             elif _mode == RobotMode.NO_CONTROLLER \
                 or _mode == RobotMode.DISCONNECTED \
                 or _mode == RobotMode.CONFIRM_SAFETY \
@@ -143,12 +144,20 @@ class URRobotSM(URRobot):
                     self._result.message = f"Selected target mode {_mode} that cannot be explicitly set"
                     self._result.success = False
                     self._node.get_logger().error(f"Selected target mode {_mode} that cannot be explicitly set")
+                    self._node.get_logger().info("here 2...")
                     self._current_goal_handle.abort()
+                    return
             else:
                 self._result.message = f"Illegal mode: {_mode}"
                 self._result.success = False
                 self._node.get_logger().error(f"Illegal mode: {_mode}")
                 self._current_goal_handle.abort()
+                return
+
+        while self._current_robot_mode.mode != self._goal.target_robot_mode:
+            time.sleep(0.5)
+
+        self._update_robot_state()
 
     def _robot_mode_callback(self, msg: RobotMode):
         if self._current_robot_mode != msg:
@@ -165,24 +174,24 @@ class URRobotSM(URRobot):
             self._node.get_logger().info(f"Safety mode {self._current_safety_mode} -> {msg}")
             self._current_safety_mode = msg
 
-            self._update_robot_state()
+            #self._update_robot_state()
             if not self._is_started:
                 self._start_set_mode_action_server()
 
     def _update_robot_state(self):
         if self._is_started:
-            self._feedback.current_robot_mode = self._current_robot_mode.mode
-            self._feedback.current_safety_mode = self._current_safety_mode.mode
+            # self._feedback.current_robot_mode = self._current_robot_mode.mode
+            # self._feedback.current_safety_mode = self._current_safety_mode.mode
             
-            assert self._current_goal_handle is not None, "Null goal handle"
+            # assert self._current_goal_handle is not None, "Null goal handle"
 
-            self._current_goal_handle.publish_feedback(self._feedback)
+            # self._current_goal_handle.publish_feedback(self._feedback)
 
-            if self._current_robot_mode.mode < self._goal.target_robot_mode \
-                or self._current_safety_mode.mode > SafetyMode.REDUCED:
-                    self._node.get_logger().debug(f"Current mode: {self._current_robot_mode.mode}, target mode: {self._goal.target_robot_mode}")
-                    self._do_transition()
-            elif self._current_robot_mode.mode == self._goal.target_robot_mode:
+            # if self._current_robot_mode.mode < self._goal.target_robot_mode \
+            #     or self._current_safety_mode.mode > SafetyMode.REDUCED:
+            #         self._node.get_logger().debug(f"Current mode: {self._current_robot_mode.mode}, target mode: {self._goal.target_robot_mode}")
+            #         self._do_transition()
+            if self._current_robot_mode.mode == self._goal.target_robot_mode:
                 self._in_action = False
                 self._result.success = True
                 self._result.message = "Reached target robot mode"
@@ -190,7 +199,6 @@ class URRobotSM(URRobot):
 
                 if self._current_robot_mode.mode == RobotMode.RUNNING \
                     and self._goal.play_program:
-                    self._node.get_logger("here.....")
 
                     
                     # TODO(george): do this or below based upon if headless
@@ -199,8 +207,6 @@ class URRobotSM(URRobot):
 
                     # time.sleep(1)
                     # self.call_service(URService.DashboardClient.SRV_PLAY)
-                else:
-                    self._node.get_logger().info(f"idk: {self._current_robot_mode.mode} {self._goal.play_program}")
 
                 if self._result.success:  
                     self._node.get_logger().info(f"Status: {self._current_goal_handle.status}")              
