@@ -29,6 +29,7 @@ from exercise_decoder_node.exercise_decoder_node_configs import (
 )
 from ur_dashboard_msgs.msg import RobotMode
 from ur_dashboard_msgs.action import SetMode
+from ur_msgs.srv import SetIO
 
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl
@@ -257,7 +258,32 @@ class URExerciseControlWindow(URControlQtWindow):
                 ),
                 blocking=True
             )
-                    
+
+            # Set tool voltage to 12V
+            self._robot.call_service(
+                URService.IOAndStatusController.SRV_SET_IO,
+                request=SetIO.Request(fun=SetIO.Request.FUN_SET_TOOL_VOLTAGE, 
+                                      state=float(SetIO.Request.STATE_TOOL_VOLTAGE_12V))
+            )
+
+        def _stop_robot_program(_):
+            if self._robot is None: return
+
+            # Power the tool off
+            self._robot.call_service(
+                URService.IOAndStatusController.SRV_SET_IO,
+                request=SetIO.Request(fun=SetIO.Request.FUN_SET_TOOL_VOLTAGE, 
+                                      state=float(SetIO.Request.STATE_TOOL_VOLTAGE_0V))
+            )
+
+            self._robot.request_mode(
+                SetMode.Goal(
+                    target_robot_mode=RobotMode.POWER_OFF,
+                    play_program=False,
+                    stop_program=False
+                ),
+                blocking=True
+            ) 
 
         def _start_freedrive_exercise_trajectory(_):
             # TODO: add ability to restrict DOF's
@@ -555,6 +581,7 @@ class URExerciseControlWindow(URControlQtWindow):
             # Launch tab
         _launch_map: dict[QPushButton, Callable] = {
             QPushButton("INITIALIZE ROBOT", self): _start_robot_program,
+            QPushButton("SHUTDOWN ROBOT", self): _stop_robot_program,
             QPushButton("START FREEDRIVE EXERCISE", self): _start_freedrive_exercise_trajectory,
             QPushButton("STOP FREEDRIVE EXERCISE", self): _stop_freedrive_exercise_trajectory,
             QPushButton("SAVE TRAJECTORY", self): _save_exercise_trajectory,

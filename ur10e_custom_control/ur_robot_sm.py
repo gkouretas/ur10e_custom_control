@@ -232,44 +232,40 @@ class URRobotSM(URRobot):
                 return None
 
     def _do_transition(self):
-        if self._goal.target_robot_mode < self._current_robot_mode.mode:
-            self._node.get_logger().error(f"Target mode lower {self._goal.target_robot_mode} than current mode {self._current_robot_mode.mode}, powering off...")
-            self._node.get_logger().info(f"Power off response: {self.call_service(URService.DashboardClient.SRV_POWER_OFF)}")
+        if self._current_safety_mode == SafetyMode.PROTECTIVE_STOP:
+            self._node.get_logger().info(f"Unlock protective stop response: {self.call_service(URService.DashboardClient.SRV_UNLOCK_PROTECTIVE_STOP)}")
+        elif self._current_safety_mode == SafetyMode.SYSTEM_EMERGENCY_STOP or self._current_safety_mode == SafetyMode.ROBOT_EMERGENCY_STOP:
+            self._node.get_logger().warning(f"The robot is currently in safety mode {self._current_safety_mode}, release EM-STOP / clear error")
+        elif self._current_safety_mode == SafetyMode.VIOLATION or self._current_safety_mode == SafetyMode.FAULT:
+            self._node.get_logger().info(f"Restart safety response: {self.call_service(URService.DashboardClient.SRV_RESTART_SAFETY)}")
         else:
-            if self._current_safety_mode == SafetyMode.PROTECTIVE_STOP:
-                self._node.get_logger().info(f"Unlock protective stop response: {self.call_service(URService.DashboardClient.SRV_UNLOCK_PROTECTIVE_STOP)}")
-            elif self._current_safety_mode == SafetyMode.SYSTEM_EMERGENCY_STOP or self._current_safety_mode == SafetyMode.ROBOT_EMERGENCY_STOP:
-                self._node.get_logger().warning(f"The robot is currently in safety mode {self._current_safety_mode}, release EM-STOP / clear error")
-            elif self._current_safety_mode == SafetyMode.VIOLATION or self._current_safety_mode == SafetyMode.FAULT:
-                self._node.get_logger().info(f"Restart safety response: {self.call_service(URService.DashboardClient.SRV_RESTART_SAFETY)}")
-            else:
-                match self._current_robot_mode.mode:
-                    case RobotMode.CONFIRM_SAFETY:
-                        self._node.get_logger().warning(f"The robot is currently in mode {self._current_robot_mode}, you must interact with the pendant")
-                    case RobotMode.BOOTING:
-                        self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, wait until it is booted")
-                    case RobotMode.POWER_ON:
-                        self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, wait until robot is in IDLE mode")
-                    case RobotMode.BACKDRIVE:
-                        self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, it will return to IDLE mode in the next state")
-                    case RobotMode.POWER_OFF | RobotMode.IDLE:
-                        if service := self._target_to_srv(self._goal.target_robot_mode):
-                            return self.call_service(service).success
-                        else:
+            match self._current_robot_mode.mode:
+                case RobotMode.CONFIRM_SAFETY:
+                    self._node.get_logger().warning(f"The robot is currently in mode {self._current_robot_mode}, you must interact with the pendant")
+                case RobotMode.BOOTING:
+                    self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, wait until it is booted")
+                case RobotMode.POWER_ON:
+                    self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, wait until robot is in IDLE mode")
+                case RobotMode.BACKDRIVE:
+                    self._node.get_logger().info(f"The robot is currently in mode {self._current_robot_mode}, it will return to IDLE mode in the next state")
+                case RobotMode.POWER_OFF | RobotMode.IDLE:
+                    if service := self._target_to_srv(self._goal.target_robot_mode):
+                        return self.call_service(service).success
+                    else:
+                        return False
+                case RobotMode.RUNNING:
+                    if self._goal.target_robot_mode == RobotMode.IDLE:
+                        if not self.call_service(URService.DashboardClient.SRV_POWER_OFF).success:
+                            self._node.get_logger().error("Failed to power off")
                             return False
-                    case RobotMode.RUNNING:
-                        if self._goal.target_robot_mode == RobotMode.IDLE:
-                            if not self.call_service(URService.DashboardClient.SRV_POWER_OFF).success:
-                                self._node.get_logger().error("Failed to power off")
-                                return False
-                            
-                        if service := self._target_to_srv(self._goal.target_robot_mode):
-                            self._node.get_logger().info("Here")
-                            return self.call_service(service).success
-                        else:
-                            return False
-                    case _:
-                        self._node.get_logger().warning(f"The robot is currently in mode {self._current_robot_mode}. There are no configured actions for this state.")
+                        
+                    if service := self._target_to_srv(self._goal.target_robot_mode):
+                        self._node.get_logger().info("Here")
+                        return self.call_service(service).success
+                    else:
+                        return False
+                case _:
+                    self._node.get_logger().warning(f"The robot is currently in mode {self._current_robot_mode}. There are no configured actions for this state.")
 
         return False
 
