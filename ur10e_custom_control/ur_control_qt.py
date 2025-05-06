@@ -30,7 +30,7 @@ from geometry_msgs.msg import (
 )
 
 class URControlQtWindow(QMainWindow): # TODO: make ROS node
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, include_robot_conf_tab: bool = True):
         super().__init__()
 
         self._node = node
@@ -47,32 +47,36 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
         self._launch_buttons = []
         self._control_buttons: list[QPushButton] = []
 
-        self.robot_tab = self._create_tab(name = "Robot Tab", layout = QVBoxLayout(), tab_create_func = self._conf_robot_tab)
+        if include_robot_conf_tab:
+            self.robot_tab = self._create_tab(name = "Robot Tab", layout = QVBoxLayout(), tab_create_func = self._conf_robot_tab)
+        else:
+            self.robot_tab = None
+
         self.service_tab = self._create_tab(name = "Service Tab", layout = QVBoxLayout(), tab_create_func = self.__conf_service_tab)
 
         self._subscribers: dict[str, Subscription] = {}
 
     def get_subscriber(self, topic: str) -> Optional[Subscription]:
         if self._robot is None:
-            print("Initialize robot")
+            self._node.get_logger().debug("Initialize robot")
             return None
         
         return self._subscribers.get(topic)
 
     def create_subscriber(self, **kwargs) -> bool:
         if "topic" not in kwargs: 
-            print("Need topic keyword argument")
+            self._node.get_logger().info("Need topic keyword argument")
             return False
         if kwargs.get("topic") in self._subscribers.keys():
-            print("Subscriber already created, use get_subscriber")
+            self._node.get_logger().info("Subscriber already created, use get_subscriber")
             return True
         
         try:
             self._subscribers[kwargs["topic"]] = self._node.create_subscription(**kwargs)
-            print(self._subscribers[kwargs["topic"]])
+            self._node.get_logger().debug(self._subscribers[kwargs["topic"]])
             return True
         except Exception as ex:
-            print(f"Exception: {ex}")
+            self._node.get_logger().error(f"Exception: {ex}")
             return False
         
     def remove_subscriber(self, topic: str) -> None:
@@ -118,7 +122,7 @@ class URControlQtWindow(QMainWindow): # TODO: make ROS node
             )
 
             if trajectory_kwargs is not None:
-                print(f"Configured trajectories: {trajectory_kwargs}")
+                self._node.get_logger().info(f"Configured trajectories: {trajectory_kwargs}")
                 self._robot.send_trajectory(**trajectory_kwargs)
 
         def __home_robot(_):

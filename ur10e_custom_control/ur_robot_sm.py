@@ -7,6 +7,7 @@ from rclpy.subscription import Subscription
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
 from rclpy.action.server import ServerGoalHandle
 
+from std_msgs.msg import Bool
 from ur_dashboard_msgs.msg import RobotMode, SafetyMode
 from ur_dashboard_msgs.action import SetMode
 from ur10e_configs import UR_QOS_PROFILE
@@ -24,8 +25,8 @@ class URRobotSM(URRobot):
         super().__init__(node, **kwargs)
 
         self._in_action = False
-        self._current_robot_mode = RobotMode.NO_CONTROLLER
-        self._current_safety_mode = SafetyMode.UNDEFINED_SAFETY_MODE
+        self._current_robot_mode = RobotMode(mode=RobotMode.NO_CONTROLLER)
+        self._current_safety_mode = SafetyMode(mode=SafetyMode.UNDEFINED_SAFETY_MODE)
         self._goal = SetMode.Goal()
 
         # Result seemingly not implemented in ServerGoalGHandle methods, so unused
@@ -49,6 +50,14 @@ class URRobotSM(URRobot):
             qos_profile = UR_QOS_PROFILE
         )
 
+        self._program_running: bool = False
+
+        self._program_running_sub = self._node.create_subscription(
+            msg_type=Bool,
+            topic="io_and_status_controller/robot_program_running", 
+            qos_profile=UR_QOS_PROFILE,
+            callback=self._update_program_running)
+
         # TODO: callback group for services???
 
         self.initialize_service(URService.DashboardClient.SRV_UNLOCK_PROTECTIVE_STOP)
@@ -59,19 +68,21 @@ class URRobotSM(URRobot):
         self.initialize_service(URService.DashboardClient.SRV_PLAY)
 
         # Get current robot and safety modes
-        self._current_robot_mode: RobotMode = self.call_service(
-            URService.DashboardClient.SRV_GET_ROBOT_MODE,
-            request = URService.get_service_type(URService.DashboardClient.SRV_GET_ROBOT_MODE).Request()
-        )
+        # if mode := self.call_service(
+        #     URService.DashboardClient.SRV_GET_ROBOT_MODE,
+        #     request = URService.get_service_type(URService.DashboardClient.SRV_GET_ROBOT_MODE).Request()
+        # ):
+        #     self._current_robot_mode = mode.robot_mode
+        # else:
+        #     raise RuntimeError("Could not determine the current robot mode")
 
-        assert self._current_robot_mode is not None, "Could not determine the current robot mode"
-
-        self._current_safety_mode: RobotMode = self.call_service(
-            URService.DashboardClient.SRV_GET_SAFETY_MODE,
-            request = URService.get_service_type(URService.DashboardClient.SRV_GET_SAFETY_MODE).Request()
-        )
-
-        assert self._current_safety_mode is not None, "Could not determine the current safety mode"
+        # if mode := self.call_service(
+        #     URService.DashboardClient.SRV_GET_SAFETY_MODE,
+        #     request = URService.get_service_type(URService.DashboardClient.SRV_GET_SAFETY_MODE).Request()
+        # ):
+        #     self._current_safety_mode = mode.safety_mode
+        # else:
+        #     raise RuntimeError("Could not determine the current safety mode")
 
     @property
     def _is_started(self):
@@ -80,6 +91,17 @@ class URRobotSM(URRobot):
     @property
     def current_mode(self) -> RobotMode:
         return self._current_robot_mode
+    
+    @property
+    def current_safety_mode(self) -> SafetyMode:
+        return self._current_safety_mode
+    
+    @property
+    def program_running(self) -> bool:
+        return self._program_running
+
+    def _update_program_running(self, msg: Bool):
+        self._program_running = msg.data
 
     def _start_set_mode_action_server(self):
         self._set_mode_action_server = ActionServer(

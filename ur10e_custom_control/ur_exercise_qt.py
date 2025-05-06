@@ -27,15 +27,17 @@ from exercise_decoder_node.exercise_decoder_node_configs import (
     MINDROVE_ACTIVATION_SERVICE,
     MINDROVE_DEACTIVATION_SERVICE
 )
+
 from ur_dashboard_msgs.msg import RobotMode
 from ur_dashboard_msgs.action import SetMode
 from ur_msgs.srv import SetIO
+from ur_msgs.action import DynamicForceModePath
 
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
 from visualization_msgs.msg import InteractiveMarker, InteractiveMarkerControl
 from visualization_msgs.msg import Marker
 
-from geometry_msgs.msg import Transform, TransformStamped, Vector3, Point
+from geometry_msgs.msg import Transform, TransformStamped, Vector3, Point, Wrench, Twist
 from nav_msgs.msg import Path
 from visualization_msgs.msg import Marker
 from std_msgs.msg import ColorRGBA
@@ -431,10 +433,31 @@ class URExerciseControlWindow(URControlQtWindow):
                 self._follow_eef.clear()
                 self._robot.set_action_feedback_callback(dynamic_force_mode_feedback)
 
-                self._robot.run_dynamic_force_mode(
+                # Construct test trajectory
+                path = Path(
                     poses = self._get_trajectory(
-                        self._exercise_traj_poses,
-                    ), 
+                        self._exercise_traj_poses
+                    )
+                )
+
+                goal = DynamicForceModePath.Goal(
+                    task_frame = path.poses[0],
+                    wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
+                    type=DynamicForceModePath.Goal.TCP_TO_ORIGIN,
+                    speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
+                    force_mode_path=path,
+                    waypoint_tolerances=[0.025,0.025,0.025,0.025,0.025,0.025],
+                    deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0],
+                    compliance_tolerances=[DynamicForceModePath.Goal.ALWAYS_INACTIVE,
+                                        DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                        DynamicForceModePath.Goal.ALWAYS_INACTIVE,
+                                        DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                        DynamicForceModePath.Goal.ALWAYS_ACTIVE,
+                                        DynamicForceModePath.Goal.ALWAYS_ACTIVE]
+                )
+
+                self._robot.run_dynamic_force_mode(
+                    goal = goal, 
                     blocking = False
                 )
             else:

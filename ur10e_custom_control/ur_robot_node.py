@@ -42,7 +42,7 @@ _DEFAULT_SERVICE_TIMEOUT_SEC = 120
 _DEFAULT_ACTION_TIMEOUT_SEC = 10
 
 class URRobot:
-    def __init__(self, node: Optional[Node] = None, **kwargs) -> None:
+    def __init__(self, node: Optional[Node] = None, run_cyclic_control: bool = True, **kwargs) -> None:
         if node is None:
             self._node = Node(**kwargs)
         else:
@@ -76,16 +76,16 @@ class URRobot:
         
         self._freedrive_signal = threading.Event()
         
+        self._cyclic_control = run_cyclic_control
+        
         self._control_loop_timer = self._node.create_timer(
             timer_period_sec = 1.0 / 500.0, # 500 Hz
             callback = self.publish_cyclic_commands
         )
-
-        self._future_exec = SingleThreadedExecutor()
+        self._control_loop_timer.cancel()
 
         # No autostart in ROS2 humble, it is in rolling though ._.
         # https://github.com/ros2/rclpy/pull/1138
-        #self._control_loop_timer.cancel()
 
         self._freedrive_timer = self._node.create_timer(
             timer_period_sec = 1.0,
@@ -197,7 +197,7 @@ class URRobot:
                 ac_client = self._mode_helper
             except Exception:
                 self._node.get_logger().error("Failed to request mode")
-                return
+                return None
 
         return self.call_action(ac_client=ac_client, goal=goal, blocking=blocking)
 
@@ -257,54 +257,15 @@ class URRobot:
         return self.call_action(
             self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking=blocking
         )
-
-        # if blocking:
-        #     if not goal_response.accepted:
-        #         raise Exception(f"Trajectory was not accepted: {goal_response}")
-
-        #     # Verify execution
-        #     result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response, blocking)
-            
-        #     if blocking:
-        #         return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-        #     else:
-        #         # TODO: return future
-        #         # raise RuntimeError("Non-blocking support for now...")
-        #         return True
-        # else:
-        #     return goal_response
         
-    def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
+    def run_dynamic_force_mode(self, goal: DynamicForceModePath.Goal, blocking: bool = True):
         """Send robot trajectory."""
         self.set_controllers(
             start=[URControlModes.DYNAMIC_FORCE_MODE], 
             stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
         )
 
-        # Construct test trajectory
-        path = Path(
-            poses = poses
-        )
-
-        goal = DynamicForceModePath.Goal(
-            # task_frame = PoseStamped(
-            #     pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0)),
-            #     header=Header(frame_id='base')
-            # ),
-            task_frame = poses[0],
-            wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
-            type=DynamicForceModePath.Goal.TCP_TO_ORIGIN,
-            speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
-            force_mode_path=path,
-            waypoint_tolerances=[0.025,0.025,0.025,0.025,0.025,0.025],
-            deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0],
-            compliance_tolerances=[DynamicForceModePath.Goal.ALWAYS_INACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_INACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE]
-        )
+        
 
         # Sending trajectory goal
         if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
@@ -421,7 +382,6 @@ class URRobot:
             _kwargs["feature_constant"] = self._feature
 
         # TODO: add support for freedrive pose
-        
         self.call_service(URService.FreedriveController.SRV_SET_FREEDRIVE_PARAMS,
                           SetFreedriveParams.Request(**_kwargs))
 

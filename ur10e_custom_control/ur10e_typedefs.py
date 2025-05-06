@@ -50,6 +50,7 @@ class URService:
         SRV_GET_LOADED_PROGRAM = __namespace + "/get_loaded_program"
         SRV_PROGRAM_STATE = __namespace + "/program_state"
         SRV_PROGRAM_RUNNING = __namespace + "/program_running"
+        SRV_PAUSE = __namespace + "/pause"
         SRV_PLAY = __namespace + "/play"
         SRV_STOP = __namespace + "/stop"
 
@@ -100,6 +101,7 @@ class URService:
         DashboardClient.SRV_GET_LOADED_PROGRAM: GetLoadedProgram,
         DashboardClient.SRV_PROGRAM_STATE: GetProgramState,
         DashboardClient.SRV_PROGRAM_RUNNING: IsProgramRunning,
+        DashboardClient.SRV_PAUSE: Trigger,
         DashboardClient.SRV_PLAY: Trigger,
         DashboardClient.SRV_STOP: Trigger,
         ControllerManager.SRV_SWITCH_CONTROLLER: SwitchController,
