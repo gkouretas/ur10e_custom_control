@@ -59,14 +59,15 @@ class URRobot:
         self.jtc_action_clients: dict[URControlModes, ActionClient] = \
             {mode: None for mode in URControlModes if mode.has_action_client}
         
-        try:
-            self._mode_helper: ActionClient = self.wait_for_action(
-                "~/set_mode",
-                SetMode
-            )
-        except Exception:
-            self._mode_helper = None
-            self._node.get_logger().warning("Failed to initialize set_mode action, assuming it is local and will try to initialize later...")
+        self._mode_helper = None
+        # try:
+        #     self._mode_helper: ActionClient = self.wait_for_action(
+        #         "~/set_mode",
+        #         SetMode
+        #     )
+        # except Exception:
+        #     self._mode_helper = None
+        #     self._node.get_logger().warning("Failed to initialize set_mode action, assuming it is local and will try to initialize later...")
         
         self._cyclic_publishers: dict[URControlModes, Publisher] = \
             {mode: self._create_controller_publisher(mode) for mode in URControlModes if mode.is_cyclic}
