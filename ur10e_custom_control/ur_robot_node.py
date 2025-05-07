@@ -391,4 +391,9 @@ class URRobot:
         self._freedrive_timer.reset()
 
     def disable_freedrive(self):
-        self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
+        if self._active_control_mode == URControlModes.FREEDRIVE_MODE:
+            self._node.get_logger().info("Disabling freedrive")
+            self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
+
+            # Publish immediately
+            self.publish_cyclic_commands()
