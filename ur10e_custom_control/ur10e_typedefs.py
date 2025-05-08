@@ -22,7 +22,8 @@ from ur_msgs.srv import (
     SetForceMode,
     SetForceModeParams,
     SetFreedriveParams,
-    SetPayload
+    SetPayload,
+    DynamicForceModeSetExecution
 )
 
 from ur_msgs.action import DynamicForceModePath
@@ -86,7 +87,12 @@ class URService:
 
         SRV_SET_FREEDRIVE_PARAMS = __namespace + "/set_freedrive_params"
 
-    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController | ForceModeController | FreedriveController
+    class DynamicPathForceModeController(str, Enum):
+        __namespace = "/dynamic_path_force_mode_controller"
+
+        SRV_DYNAMIC_FORCE_MODE_SET_EXECUTION = __namespace + "/dynamic_force_mode_set_execution"
+
+    URServiceType = DashboardClient | ControllerManager | IOAndStatusController | URConfigurationController | ForceModeController | FreedriveController | DynamicPathForceModeController
 
     _UR_SERVICE_MAP: dict[str, SrvTypeRequest] = {
         DashboardClient.SRV_POWER_ON: Trigger,
@@ -112,6 +118,7 @@ class URService:
         IOAndStatusController.SRV_SET_FORCE_MODE_PARAMS: SetForceModeParams,
         IOAndStatusController.SRV_ZERO_FT_SENSOR: Trigger,
         IOAndStatusController.SRV_SET_PAYLOAD: SetPayload,
+        DynamicPathForceModeController.SRV_DYNAMIC_FORCE_MODE_SET_EXECUTION: DynamicForceModeSetExecution,
         URConfigurationController.SRV_GET_ROBOT_SOFTWARE_VERSION: GetRobotSoftwareVersion,
         ForceModeController.SRV_START_FORCE_MODE: SetForceMode,
         ForceModeController.SRV_STOP_FORCE_MODE: Trigger,
