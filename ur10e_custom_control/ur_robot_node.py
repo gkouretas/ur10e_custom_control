@@ -260,13 +260,11 @@ class URRobot:
         )
         
     def run_dynamic_force_mode(self, goal: DynamicForceModePath.Goal, blocking: bool = True):
-        """Send robot trajectory."""
+        """Execute dynamic force mode"""
         self.set_controllers(
             start=[URControlModes.DYNAMIC_FORCE_MODE], 
             stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
         )
-
-        
 
         # Sending trajectory goal
         if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
