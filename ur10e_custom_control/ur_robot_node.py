@@ -261,10 +261,11 @@ class URRobot:
         
     def run_dynamic_force_mode(self, goal: DynamicForceModePath.Goal, blocking: bool = True):
         """Execute dynamic force mode"""
-        self.set_controllers(
-            start=[URControlModes.DYNAMIC_FORCE_MODE], 
-            stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
-        )
+        if URControlModes.DYNAMIC_FORCE_MODE not in self._get_all_active_controllers():
+            self.set_controllers(
+                start=[URControlModes.DYNAMIC_FORCE_MODE], 
+                stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
+            )
 
         # Sending trajectory goal
         if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
@@ -389,7 +390,7 @@ class URRobot:
         self._freedrive_timer.reset()
 
     def disable_freedrive(self):
-        if self._active_control_mode == URControlModes.FREEDRIVE_MODE:
+        if self._active_control_mode == URControlModes.FREEDRIVE_MODE and self._control_msg[URControlModes.FREEDRIVE_MODE].data:
             self._node.get_logger().info("Disabling freedrive")
             self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
 
