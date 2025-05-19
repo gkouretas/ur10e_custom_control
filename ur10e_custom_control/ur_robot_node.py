@@ -219,8 +219,8 @@ class URRobot:
         return self.call_service(
             URService.ControllerManager.SRV_SWITCH_CONTROLLER,
             SwitchController.Request(
-                start_controllers = start,
-                stop_controllers = stop
+                activate_controllers = start,
+                deactivate_controllers = stop
             )
         )
     

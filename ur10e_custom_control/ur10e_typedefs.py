@@ -23,6 +23,7 @@ from ur_msgs.srv import (
     SetForceModeParams,
     SetFreedriveParams,
     SetPayload,
+    SetTCPOffset,
     DynamicForceModeSetExecution
 )
 
@@ -70,6 +71,7 @@ class URService:
         SRV_SET_FORCE_MODE_PARAMS = __namespace + "/set_force_mode_params"
         SRV_ZERO_FT_SENSOR = __namespace + "/zero_ftsensor"
         SRV_SET_PAYLOAD = __namespace + "/set_payload"
+        SRV_SET_TCP_OFFSET = __namespace + "/set_tcp_offset"
 
     class URConfigurationController(str, Enum):
         __namespace = "/ur_configuration_controller"
@@ -118,6 +120,7 @@ class URService:
         IOAndStatusController.SRV_SET_FORCE_MODE_PARAMS: SetForceModeParams,
         IOAndStatusController.SRV_ZERO_FT_SENSOR: Trigger,
         IOAndStatusController.SRV_SET_PAYLOAD: SetPayload,
+        IOAndStatusController.SRV_SET_TCP_OFFSET: SetTCPOffset,
         DynamicPathForceModeController.SRV_DYNAMIC_FORCE_MODE_SET_EXECUTION: DynamicForceModeSetExecution,
         URConfigurationController.SRV_GET_ROBOT_SOFTWARE_VERSION: GetRobotSoftwareVersion,
         ForceModeController.SRV_START_FORCE_MODE: SetForceMode,
