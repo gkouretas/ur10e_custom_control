@@ -1,8 +1,8 @@
 import time
 
 from rclpy.node import Node
-from ur10e_typedefs import URService
-from ur_robot_node import URRobot
+from ur10e_custom_control.ur10e_typedefs import URService
+from ur10e_custom_control.ur_robot_node import URRobot
 from rclpy.subscription import Subscription
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
 from rclpy.action.server import ServerGoalHandle
@@ -10,7 +10,7 @@ from rclpy.action.server import ServerGoalHandle
 from std_msgs.msg import Bool
 from ur_dashboard_msgs.msg import RobotMode, SafetyMode
 from ur_dashboard_msgs.action import SetMode
-from ur10e_configs import UR_QOS_PROFILE
+from ur10e_custom_control.ur10e_configs import UR_QOS_PROFILE
 
 class URRobotSM(URRobot):
     def __init__(self, node: Node | None = None, **kwargs) -> None:
