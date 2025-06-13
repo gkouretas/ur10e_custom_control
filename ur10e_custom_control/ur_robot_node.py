@@ -3,6 +3,8 @@ import time
 import threading
 import copy
 
+from functools import partial
+
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from ur_msgs.action import DynamicForceModePath
@@ -32,6 +34,7 @@ from ur10e_typedefs import (
 )
 
 from ur_msgs.srv import SetFreedriveParams
+from ur_dashboard_msgs.action import SetMode
 
 from typing import Optional, Iterable, Literal
 
@@ -39,7 +42,7 @@ _DEFAULT_SERVICE_TIMEOUT_SEC = 120
 _DEFAULT_ACTION_TIMEOUT_SEC = 10
 
 class URRobot:
-    def __init__(self, node: Optional[Node] = None, **kwargs) -> None:
+    def __init__(self, node: Optional[Node] = None, run_cyclic_control: bool = True, **kwargs) -> None:
         if node is None:
             self._node = Node(**kwargs)
         else:
@@ -56,6 +59,16 @@ class URRobot:
         self.jtc_action_clients: dict[URControlModes, ActionClient] = \
             {mode: None for mode in URControlModes if mode.has_action_client}
         
+        self._mode_helper = None
+        # try:
+        #     self._mode_helper: ActionClient = self.wait_for_action(
+        #         "~/set_mode",
+        #         SetMode
+        #     )
+        # except Exception:
+        #     self._mode_helper = None
+        #     self._node.get_logger().warning("Failed to initialize set_mode action, assuming it is local and will try to initialize later...")
+        
         self._cyclic_publishers: dict[URControlModes, Publisher] = \
             {mode: self._create_controller_publisher(mode) for mode in URControlModes if mode.is_cyclic}
         
@@ -64,16 +77,16 @@ class URRobot:
         
         self._freedrive_signal = threading.Event()
         
+        self._cyclic_control = run_cyclic_control
+        
         self._control_loop_timer = self._node.create_timer(
             timer_period_sec = 1.0 / 500.0, # 500 Hz
             callback = self.publish_cyclic_commands
         )
-
-        self._future_exec = SingleThreadedExecutor()
+        self._control_loop_timer.cancel()
 
         # No autostart in ROS2 humble, it is in rolling though ._.
         # https://github.com/ros2/rclpy/pull/1138
-        #self._control_loop_timer.cancel()
 
         self._freedrive_timer = self._node.create_timer(
             timer_period_sec = 1.0,
@@ -82,6 +95,10 @@ class URRobot:
 
         self._freedrive_dofs: list[bool] = [True, True, True, True, True, True]
         self._feature: Optional[int] = None
+
+        self._action_feedback_callback = None
+        self._action_completion_callback = None
+        self._action_result_callback = None
 
         self._active_control_mode: URControlModes = None
 
@@ -117,6 +134,15 @@ class URRobot:
                 timeout = _DEFAULT_SERVICE_TIMEOUT_SEC
             )
             
+    def set_action_feedback_callback(self, callback):
+        self._action_feedback_callback = callback
+
+    def set_action_completion_callback(self, callback):
+        self._action_completion_callback = callback
+
+    def set_action_result_callback(self, callback):
+        self._action_result_callback = callback
+    
     def wait_for_action(self, action_name: str, action_type: type, timeout: int =_DEFAULT_ACTION_TIMEOUT_SEC):
         self._node.get_logger().info(f"Attempting to start action {action_name} (type: {action_type})")
         client = ActionClient(self._node, action_type, action_name)
@@ -128,7 +154,7 @@ class URRobot:
         self._node.get_logger().info(f"Successfully connected to action '{action_name}'")
         return client
     
-    def call_service(self, srv: URService.URServiceType, request: SrvTypeRequest):
+    def call_service(self, srv: URService.URServiceType, request: SrvTypeRequest | None = None):
         service = self.service_clients.get(srv)
         
         if service is None:
@@ -141,7 +167,7 @@ class URRobot:
 
         future: Future = service.call_async(request)
         rclpy.spin_until_future_complete(self._service_node, future)
-        #while not future.done(): time.sleep(0.01)
+
         if future.result() is not None:
             return future.result()
         else:
@@ -149,32 +175,39 @@ class URRobot:
 
     def call_action(self, ac_client: ActionClient, goal, blocking: bool):
         self._node.get_logger().info(f"Calling action client: {ac_client}")
-        future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback)
-        if False:
-            # rclpy.spin_until_future_complete(self._service_node, future)
-            self._node.get_logger().info("Result received")
-            #while not future.done(): time.sleep(0.01)
+        
+        if blocking:
+            return ac_client.send_goal(goal, feedback_callback=self._action_feedback_callback)
         else:
-            future.add_done_callback(self.get_result)
+            future = ac_client.send_goal_async(goal, feedback_callback=self._action_feedback_callback)
+            if self._action_completion_callback is not None:
+                future.add_done_callback(partial(self._action_completion_callback, ac_client, self._action_result_callback))
             return future
+        
+    def request_mode(self, goal: SetMode.Goal, blocking: bool):
+        self._node.get_logger().info(f"Requesting mode with goal {goal}")
+        if ac_client := self._mode_helper:
+            pass
+        else:
+            try:
+                self._mode_helper: ActionClient = self.wait_for_action(
+                    "~/set_mode",
+                    SetMode
+                )
 
-        # if future.result() is not None:
-        #     return future.result()
-        # else:
-        #     raise Exception(f"Exception while calling action: {future.exception()}")
+                ac_client = self._mode_helper
+            except Exception:
+                self._node.get_logger().error("Failed to request mode")
+                return None
 
-    def _action_feedback(self, feedback):
-        self._node.get_logger().info(f"Feedback: {feedback}")
+        return self.call_action(ac_client=ac_client, goal=goal, blocking=blocking)
 
     def get_result(self, ac_client: ActionClient, goal_response):
-        future_res = ac_client._get_result_async(goal_response)
-        rclpy.spin_until_future_complete(self._service_node, future_res)
-        self._node.get_logger().info("Result received")
-        #while not future_res.done(): time.sleep(0.01)
-        if future_res.result() is not None:
-            return future_res.result().result
-        else:
-            raise Exception(f"Exception while calling action: {future_res.exception()}")
+        self._node.get_logger().info(f"Getting result from action client: {ac_client}")
+        future = ac_client._get_result_async(goal_response)
+        rclpy.spin_until_future_complete(self._service_node, future)
+
+        return future.result()
 
     def list_controllers(self) -> ListControllers.Response:
         return self.call_service(
@@ -186,8 +219,8 @@ class URRobot:
         return self.call_service(
             URService.ControllerManager.SRV_SWITCH_CONTROLLER,
             SwitchController.Request(
-                start_controllers = start,
-                stop_controllers = stop
+                activate_controllers = start,
+                deactivate_controllers = stop
             )
         )
     
@@ -198,6 +231,7 @@ class URRobot:
         )
 
     def send_trajectory(self, waypts: list[list[float]], time_vec: list[Duration], blocking: bool = True):
+        
         """Send robot trajectory."""
         if len(waypts) != len(time_vec):
             raise Exception("waypoints vector and time vec should be same length")
@@ -221,76 +255,27 @@ class URRobot:
             self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY] = \
                 self.wait_for_action(URControlModes.SCALED_JOINT_TRAJECTORY.action_type_topic, URControlModes.SCALED_JOINT_TRAJECTORY.action_type)
         
-        goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking = blocking
+        return self.call_action(
+            self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], FollowJointTrajectory.Goal(trajectory = joint_trajectory), blocking=blocking
         )
-
-        if not goal_response.accepted:
-            raise Exception(f"Trajectory was not accepted: {goal_response}")
-
-        # Verify execution
-        # TODO: make option for non-blocking
-        if blocking:
-            result: FollowJointTrajectory.Result = self.get_result(self.jtc_action_clients[URControlModes.SCALED_JOINT_TRAJECTORY], goal_response)
-            return result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-        else:
-            # TODO: return future
-            # raise RuntimeError("Non-blocking support for now...")
-            return True
         
-    def run_dynamic_force_mode(self, poses: list[PoseStamped], blocking: bool = True):
-        """Send robot trajectory."""
-        self.set_controllers(
-            start=[URControlModes.DYNAMIC_FORCE_MODE], 
-            stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
-        )
-
-        # Construct test trajectory
-        path = Path(
-            poses = poses
-        )
-
-        goal = DynamicForceModePath.Goal(
-            # task_frame = PoseStamped(
-            #     pose=Pose(position=Point(x=0.0,y=0.0,z=0.0), orientation=Quaternion(w=1.0,x=0.0,y=0.0,z=0.0)),
-            #     header=Header(frame_id='base')
-            # ),
-            task_frame = poses[0],
-            wrench_baseline=Wrench(force=Vector3(x=0.0,y=0.0,z=0.0), torque=Vector3(x=0.0,y=0.0,z=0.0)),
-            type=DynamicForceModePath.Goal.TCP_TO_ORIGIN,
-            speed_limits=Twist(linear=Vector3(x=0.01,y=0.01,z=0.01),angular=Vector3(x=0.01,y=0.01,z=0.01)),
-            force_mode_path=path,
-            waypoint_tolerances=[0.025,0.025,0.025,0.025,0.025,0.025],
-            deviation_limits=[1.0,1.0,1.0,1.0,1.0,1.0],
-            compliance_tolerances=[DynamicForceModePath.Goal.ALWAYS_INACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_INACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE,
-                                   DynamicForceModePath.Goal.ALWAYS_ACTIVE]
-        )
+    def run_dynamic_force_mode(self, goal: DynamicForceModePath.Goal, blocking: bool = True):
+        """Execute dynamic force mode"""
+        if URControlModes.DYNAMIC_FORCE_MODE not in self._get_all_active_controllers():
+            self.set_controllers(
+                start=[URControlModes.DYNAMIC_FORCE_MODE], 
+                stop=self._get_all_active_controllers(exclude=URControlModes.DYNAMIC_FORCE_MODE)
+            )
 
         # Sending trajectory goal
         if self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] is None:
             self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE] = \
                 self.wait_for_action(URControlModes.DYNAMIC_FORCE_MODE.action_type_topic, URControlModes.DYNAMIC_FORCE_MODE.action_type)
         
-        goal_response = self.call_action(
-            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking = True
+        return self.call_action(
+            self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal, blocking=blocking
         )
-
-        if not goal_response.accepted:
-            raise Exception(f"Trajectory was not accepted: {goal_response}")
-
-        # Verify execution
-        # TODO: make option for non-blocking
-        if blocking:
-            result: DynamicForceModePath.Result = self.get_result(self.jtc_action_clients[URControlModes.DYNAMIC_FORCE_MODE], goal_response)
-            return result.error_code == DynamicForceModePath.Result.SUCCESSFUL
-        else:
-            # TODO: return future
-            raise RuntimeError("Non-blocking support for now...")
-
+    
     def run_position_control(self):
         if self._cyclic_publishers[URControlModes.FORWARD_POSITION] is None:
             self._cyclic_publishers[URControlModes.FORWARD_POSITION] = \
@@ -397,7 +382,6 @@ class URRobot:
             _kwargs["feature_constant"] = self._feature
 
         # TODO: add support for freedrive pose
-        
         self.call_service(URService.FreedriveController.SRV_SET_FREEDRIVE_PARAMS,
                           SetFreedriveParams.Request(**_kwargs))
 
@@ -406,4 +390,9 @@ class URRobot:
         self._freedrive_timer.reset()
 
     def disable_freedrive(self):
-        self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
+        if self._active_control_mode == URControlModes.FREEDRIVE_MODE and self._control_msg[URControlModes.FREEDRIVE_MODE].data:
+            self._node.get_logger().info("Disabling freedrive")
+            self._control_msg[URControlModes.FREEDRIVE_MODE].data = False
+
+            # Publish immediately
+            self.publish_cyclic_commands()
